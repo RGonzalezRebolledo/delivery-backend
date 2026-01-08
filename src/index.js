@@ -86,9 +86,19 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 8080;
 
 // Escuchar en 0.0.0.0 es obligatorio para Railway
+// app.listen(PORT, '0.0.0.0', () => {
+//     console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
+//     console.log('✅ Orígenes permitidos:', allowedOrigins);
+// });
+
 app.listen(PORT, '0.0.0.0', () => {
+    console.log("--- CHECK DE VARIABLES ---");
+    console.log("DATABASE_URL existe:", !!process.env.DATABASE_URL);
+    if (process.env.DATABASE_URL) {
+        console.log("Host detectado:", process.env.DATABASE_URL.split('@')[1]?.split(':')[0]);
+    }
+    console.log("--------------------------");
     console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
-    console.log('✅ Orígenes permitidos:', allowedOrigins);
 });
 
 
