@@ -1,5 +1,6 @@
 import pg from 'pg';
-import { pgdb } from './config.js';
+// import { pgdb } from './config.js';
+import 'dotenv/config';
 
 // 1. Usamos DATABASE_URL si existe (Producción), si no, los valores de config.js (Local)
 // const isProduction = process.env.DATABASE_URL;
