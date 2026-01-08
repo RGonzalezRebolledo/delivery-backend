@@ -34,6 +34,13 @@ import 'dotenv/config';
 // Prioridad absoluta a DATABASE_URL (la variable que Railway crea automáticamente)
 const connectionString = process.env.DATABASE_URL;
 
+console.log("--- DEBUG BASE DE DATOS ---");
+console.log("DATABASE_URL existe:", !!process.env.DATABASE_URL);
+if (process.env.DATABASE_URL) {
+    console.log("Inicia con:", process.env.DATABASE_URL.substring(0, 15), "...");
+}
+console.log("---------------------------");
+
 export const pool = new pg.Pool({
     connectionString: connectionString,
     // En Railway, la conexión interna/externa siempre requiere SSL
