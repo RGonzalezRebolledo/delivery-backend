@@ -35,9 +35,9 @@ import 'dotenv/config';
 const connectionString = "postgresql://postgres:zOediUhGgqpaaEypWgVWpxoDKAGadavw@yamanote.proxy.rlwy.net:47717/railway";;
 
 console.log("--- DEBUG BASE DE DATOS ---");
-console.log("DATABASE_URL existe:", !!process.env.DATABASE_URL);
-if (process.env.DATABASE_URL) {
-    console.log("Inicia con:", process.env.DATABASE_URL.substring(0, 15), "...");
+console.log("DATABASE_URL existe:", connectionString);
+if (connectionString) {
+    console.log("Inicia con:", connectionString.substring(0, 15), "...");
 }
 console.log("---------------------------");
 
