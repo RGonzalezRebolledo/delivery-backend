@@ -1,4 +1,4 @@
-import bcrypt from 'bcrypt'
+import bcryptjs from 'bcryptjs'
 import { pool } from "../db.js";
 import jwt from 'jsonwebtoken'
 
@@ -92,9 +92,9 @@ export const createUser = async (req, res, next) => {
 
   // CREO EL HASH DEL PASSWORD
   // creo saltos para evitar crear hash iguales en caso que las contrasenas sean iguales
-const salt = await bcrypt.genSalt (10) 
+const salt = await bcryptjs.genSalt (10) 
 // creo el hash
-const hashedpassword = await bcrypt.hash(password_hash,salt)
+const hashedpassword = await bcryptjs.hash(password_hash,salt)
   try {
         // 1. Verificar la existencia del usuario antes de proceder
         const existenceCheckResult = await checkUserExistence(pool, email);
