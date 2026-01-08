@@ -1,3 +1,32 @@
+import pg from 'pg';
+import { pgdb } from './config.js';
+
+// 1. Usamos DATABASE_URL si existe (Producción), si no, los valores de config.js (Local)
+const isProduction = process.env.DATABASE_URL;
+
+export const pool = new pg.Pool({
+    connectionString: isProduction 
+        ? process.env.DATABASE_URL 
+        : `postgresql://${pgdb.DB_USER}:${pgdb.DB_PASSWORD}@${pgdb.DB_HOST}:${pgdb.DB_PORT}/${pgdb.DB_DATABASE}`,
+    
+    // 2. SSL es OBLIGATORIO para PostgreSQL en Railway
+    ssl: isProduction 
+        ? { rejectUnauthorized: false } 
+        : false
+});
+
+// Verificación para los logs
+pool.on('connect', () => {
+    console.log('✅ Conexión exitosa a PostgreSQL');
+});
+
+pool.on('error', (err) => {
+    console.error('❌ Error inesperado en el pool de conexión:', err);
+});
+
+
+
+
 
 // import pg from 'pg';
 
@@ -64,18 +93,18 @@
 //     console.error('❌ Error inesperado en el pool de Postgres', err);
 // });
 
-import pg from 'pg';
-import {pgdb} from './config.js'
+// import pg from 'pg';
+// import {pgdb} from './config.js'
 
-export const pool = new pg.Pool (
-    {
-       user: pgdb.DB_USER,
-       host: pgdb.DB_HOST,
-       database: pgdb.DB_DATABASE,
-       password: pgdb.DB_PASSWORD,
-       port: pgdb.DB_PORT,
-    }
-) 
+// export const pool = new pg.Pool (
+//     {
+//        user: pgdb.DB_USER,
+//        host: pgdb.DB_HOST,
+//        database: pgdb.DB_DATABASE,
+//        password: pgdb.DB_PASSWORD,
+//        port: pgdb.DB_PORT,
+//     }
+// ) 
 
 // Función para borrar todos los registros (deja tablas intactas)
 // export const clearDatabase = async () => {
