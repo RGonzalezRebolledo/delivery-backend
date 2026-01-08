@@ -1,6 +1,6 @@
 import 'dotenv/config'
 import express from 'express'
-import { pgdb } from './config.js'
+// import { pgdb } from './config.js'
 import morgan from 'morgan'
 import cors from 'cors' // <--- Única declaración necesaria
 import routerUsers from './routes/users.route.js'

@@ -2,27 +2,27 @@ import pg from 'pg';
 import { pgdb } from './config.js';
 
 // 1. Usamos DATABASE_URL si existe (Producción), si no, los valores de config.js (Local)
-const isProduction = process.env.DATABASE_URL;
+// const isProduction = process.env.DATABASE_URL;
 
-export const pool = new pg.Pool({
-    connectionString: isProduction 
-        ? process.env.DATABASE_URL 
-        : `postgresql://${pgdb.DB_USER}:${pgdb.DB_PASSWORD}@${pgdb.DB_HOST}:${pgdb.DB_PORT}/${pgdb.DB_DATABASE}`,
+// export const pool = new pg.Pool({
+//     connectionString: isProduction 
+//         ? process.env.DATABASE_URL 
+//         : `postgresql://${pgdb.DB_USER}:${pgdb.DB_PASSWORD}@${pgdb.DB_HOST}:${pgdb.DB_PORT}/${pgdb.DB_DATABASE}`,
     
-    // 2. SSL es OBLIGATORIO para PostgreSQL en Railway
-    ssl: isProduction 
-        ? { rejectUnauthorized: false } 
-        : false
-});
+//     // 2. SSL es OBLIGATORIO para PostgreSQL en Railway
+//     ssl: isProduction 
+//         ? { rejectUnauthorized: false } 
+//         : false
+// });
 
-// Verificación para los logs
-pool.on('connect', () => {
-    console.log('✅ Conexión exitosa a PostgreSQL');
-});
+// // Verificación para los logs
+// pool.on('connect', () => {
+//     console.log('✅ Conexión exitosa a PostgreSQL');
+// });
 
-pool.on('error', (err) => {
-    console.error('❌ Error inesperado en el pool de conexión:', err);
-});
+// pool.on('error', (err) => {
+//     console.error('❌ Error inesperado en el pool de conexión:', err);
+// });
 
 
 
@@ -31,23 +31,23 @@ pool.on('error', (err) => {
 // import pg from 'pg';
 
 // Prioridad absoluta a DATABASE_URL (la variable que Railway crea automáticamente)
-// const connectionString = process.env.DATABASE_URL;
+const connectionString = process.env.DATABASE_URL;
 
-// export const pool = new pg.Pool({
-//     connectionString: connectionString,
-//     // En Railway, la conexión interna/externa siempre requiere SSL
-//     ssl: {
-//         rejectUnauthorized: false
-//     }
-// });
+export const pool = new pg.Pool({
+    connectionString: connectionString,
+    // En Railway, la conexión interna/externa siempre requiere SSL
+    ssl: {
+        rejectUnauthorized: false
+    }
+});
 
-// pool.on('connect', () => {
-//     console.log(`✅ Conectado a la base de datos PostgreSQL en Railway`);
-// });
+pool.on('connect', () => {
+    console.log(`✅ Conectado a la base de datos PostgreSQL en Railway`);
+});
 
-// pool.on('error', (err) => {
-//     console.error('❌ Error inesperado en el pool de conexión:', err);
-// });
+pool.on('error', (err) => {
+    console.error('❌ Error inesperado en el pool de conexión:', err);
+});
 
 // import pg from 'pg';
 // import { pgdb } from './config.js';
