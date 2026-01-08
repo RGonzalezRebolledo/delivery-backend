@@ -10,7 +10,7 @@ export const validateUserAdmin = async (req, res) => {
     if (!email || !password) {
         return res.status(400).json({ error: "Faltan el email o la contraseña." });
     }
-
+    console.log("--- INTENTO DE LOGIN RECIBIDO ---");
     try {
         // 2. Buscar al usuario
         const resultUser = await pool.query(
