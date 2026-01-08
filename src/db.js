@@ -32,7 +32,7 @@ import 'dotenv/config';
 // import pg from 'pg';
 
 // Prioridad absoluta a DATABASE_URL (la variable que Railway crea automáticamente)
-const connectionString = process.env.DATABASE_URL;
+const connectionString = "postgresql://postgres:zOediUhGgqpaaEypWgVWpxoDKAGadavw@yamanote.proxy.rlwy.net:47717/railway";;
 
 console.log("--- DEBUG BASE DE DATOS ---");
 console.log("DATABASE_URL existe:", !!process.env.DATABASE_URL);
