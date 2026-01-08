@@ -1,6 +1,6 @@
 
 import { pool } from '../db.js';
-import bcryptjs from 'bcryptjs';
+import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 
 export const validateUser = async (req, res) => {
