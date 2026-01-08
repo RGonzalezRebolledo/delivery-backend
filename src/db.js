@@ -1,24 +1,24 @@
 
-import pg from 'pg';
+// import pg from 'pg';
 
 // Prioridad absoluta a DATABASE_URL (la variable que Railway crea automáticamente)
-const connectionString = process.env.DATABASE_URL;
+// const connectionString = process.env.DATABASE_URL;
 
-export const pool = new pg.Pool({
-    connectionString: connectionString,
-    // En Railway, la conexión interna/externa siempre requiere SSL
-    ssl: {
-        rejectUnauthorized: false
-    }
-});
+// export const pool = new pg.Pool({
+//     connectionString: connectionString,
+//     // En Railway, la conexión interna/externa siempre requiere SSL
+//     ssl: {
+//         rejectUnauthorized: false
+//     }
+// });
 
-pool.on('connect', () => {
-    console.log(`✅ Conectado a la base de datos PostgreSQL en Railway`);
-});
+// pool.on('connect', () => {
+//     console.log(`✅ Conectado a la base de datos PostgreSQL en Railway`);
+// });
 
-pool.on('error', (err) => {
-    console.error('❌ Error inesperado en el pool de conexión:', err);
-});
+// pool.on('error', (err) => {
+//     console.error('❌ Error inesperado en el pool de conexión:', err);
+// });
 
 // import pg from 'pg';
 // import { pgdb } from './config.js';
@@ -64,18 +64,18 @@ pool.on('error', (err) => {
 //     console.error('❌ Error inesperado en el pool de Postgres', err);
 // });
 
-// import pg from 'pg';
-// import {pgdb} from './config.js'
+import pg from 'pg';
+import {pgdb} from './config.js'
 
-// export const pool = new pg.Pool (
-//     {
-//        user: pgdb.DB_USER,
-//        host: pgdb.DB_HOST,
-//        database: pgdb.DB_DATABASE,
-//        password: pgdb.DB_PASSWORD,
-//        port: pgdb.DB_PORT,
-//     }
-// ) 
+export const pool = new pg.Pool (
+    {
+       user: pgdb.DB_USER,
+       host: pgdb.DB_HOST,
+       database: pgdb.DB_DATABASE,
+       password: pgdb.DB_PASSWORD,
+       port: pgdb.DB_PORT,
+    }
+) 
 
 // Función para borrar todos los registros (deja tablas intactas)
 // export const clearDatabase = async () => {

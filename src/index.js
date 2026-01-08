@@ -31,20 +31,43 @@ if (process.env.FRONTEND_URL_PROD) {
     allowedOrigins.push(process.env.FRONTEND_URL_PROD.trim());
 }
 
-app.use(cors({
-    origin: (origin, callback) => {
-        // Permitir solicitudes sin origen (como Postman) o si el origen está en la lista
-        if (!origin || allowedOrigins.includes(origin)) {
-            callback(null, true);
-        } else {
-            console.error(`CORS Error: El origen ${origin} no está permitido`);
-            callback(new Error('Not allowed by CORS'));
-        }
-    },
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
-}));
+// app.use(cors({
+//     origin: (origin, callback) => {
+//         // Permitir solicitudes sin origen (como Postman) o si el origen está en la lista
+//         if (!origin || allowedOrigins.includes(origin)) {
+//             callback(null, true);
+//         } else {
+//             console.error(`CORS Error: El origen ${origin} no está permitido`);
+//             callback(new Error('Not allowed by CORS'));
+//         }
+//     },
+//     credentials: true,
+//     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
+// }));
 // -----------------------------
+const cors = require('cors');
+
+// ... después de inicializar app = express()
+
+app.use(cors({
+  origin: function (origin, callback) {
+    // Permite cualquier origen en desarrollo o especifica tus URLs
+    const allowedOrigins = [
+      'http://localhost:5173', // Puerto común de Vite
+      'http://localhost:5174', // El puerto que estás usando según tu error
+      'https://tu-frontend-en-railway.up.railway.app' 
+    ];
+    
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error('No permitido por CORS'));
+    }
+  },
+  credentials: true, // ¡ESTO ES VITAL porque usas withCredentials en el front!
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 
 app.use(morgan('dev'))
 app.use(express.json())
