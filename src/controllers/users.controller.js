@@ -134,11 +134,19 @@ const hashedpassword = await bcryptjs.hash(password_hash,salt)
     });
 
     // 💡 CAMBIO CLAVE: Configurar el token como una Cookie HTTP-Only
+// res.cookie('accessToken', token, {
+//   httpOnly: true,             // INACCESIBLE desde JavaScript (Protección XSS)
+//   secure: process.env.NODE_ENV === 'production', // Solo enviar en HTTPS en producción
+//   sameSite: 'Lax',            // O 'Strict' o 'None' (ajustar por seguridad/CORS)
+//   maxAge: 3600000             // 1 hora en milisegundos (mismo que expiresIn)
+// });
+
+// En validateUser y createUser
 res.cookie('accessToken', token, {
-  httpOnly: true,             // INACCESIBLE desde JavaScript (Protección XSS)
-  secure: process.env.NODE_ENV === 'production', // Solo enviar en HTTPS en producción
-  sameSite: 'Lax',            // O 'Strict' o 'None' (ajustar por seguridad/CORS)
-  maxAge: 3600000             // 1 hora en milisegundos (mismo que expiresIn)
+  httpOnly: true,    // Protege contra XSS
+  secure: true,      // OBLIGATORIO para sameSite: 'none' (Funciona en Railway con HTTPS)
+  sameSite: 'none',  // OBLIGATORIO para comunicación entre Vercel y Railway
+  maxAge: 24 * 60 * 60 * 1000 // 1 día
 });
     res.status(201).json({ mensaje: token });
   

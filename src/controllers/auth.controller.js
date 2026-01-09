@@ -8,10 +8,17 @@ export const logoutUser = async (req, res) => {
         // Usamos res.clearCookie() para decirle al navegador que elimine la cookie.
         // Es importante pasar el mismo nombre ('accessToken') y, a veces, las mismas
         // opciones que se usaron al configurarla (excepto maxAge/expires).
+        // res.clearCookie('accessToken', {
+        //     httpOnly: true,
+        //     secure: process.env.NODE_ENV === 'production',
+        //     sameSite: 'Lax',
+        // });
+
         res.clearCookie('accessToken', {
             httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'Lax',
+            // ⚠️ IMPORTANTE: Estos deben ser idénticos a los del Login/Registro
+            secure: true, 
+            sameSite: 'none', 
         });
 
         // 2. Enviar respuesta de éxito

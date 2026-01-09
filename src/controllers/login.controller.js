@@ -60,12 +60,20 @@ export const validateUser = async (req, res) => {
         );
 
         // 6. Establecer Cookie
-        res.cookie('accessToken', token, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'Lax',
-            maxAge: 24 * 60 * 60 * 1000
-        });
+        // res.cookie('accessToken', token, {
+        //     httpOnly: true,
+        //     secure: process.env.NODE_ENV === 'production',
+        //     sameSite: 'Lax',
+        //     maxAge: 24 * 60 * 60 * 1000
+        // });
+        
+        // En validateUser y createUser
+res.cookie('accessToken', token, {
+    httpOnly: true,    // Protege contra XSS
+    secure: true,      // OBLIGATORIO para sameSite: 'none' (Funciona en Railway con HTTPS)
+    sameSite: 'none',  // OBLIGATORIO para comunicación entre Vercel y Railway
+    maxAge: 24 * 60 * 60 * 1000 // 1 día
+});
 
         // 7. Respuesta exitosa
         return res.status(200).json({ 
