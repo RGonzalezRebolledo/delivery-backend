@@ -54,7 +54,8 @@ export const validateUser = async (req, res) => {
 
         const token = jwt.sign(
             tokenPayload,
-            process.env.JWT_SECRET,
+            // process.env.JWT_SECRET,
+            'palabrasecreta',
             { expiresIn: '1d' }
         );
 

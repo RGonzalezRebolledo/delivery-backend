@@ -127,7 +127,8 @@ const hashedpassword = await bcryptjs.hash(password_hash,salt)
         nombre: newUser.rows[0].nombre,
         id: newUser.rows[0].id
     },
-    process.env.JWT_SECRET,
+    // process.env.JWT_SECRET,
+    'palabrasecreta',
     {
         expiresIn: '1h'
     });

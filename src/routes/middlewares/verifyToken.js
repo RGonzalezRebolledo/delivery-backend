@@ -3,7 +3,8 @@ import jwt from 'jsonwebtoken';
 // 💡 DEBES CONFIGURAR ESTO:
 // Se recomienda usar 'process.env.JWT_SECRET' en producción.
 // Reemplaza el valor por defecto si no estás usando variables de entorno
-const JWT_SECRET = process.env.JWT_SECRET || 'TU_SECRETO_SEGURO_DEBES_CAMBIARLO'; 
+// const JWT_SECRET = process.env.JWT_SECRET || 'TU_SECRETO_SEGURO_DEBES_CAMBIARLO'; 
+const JWT_SECRET =  'palabrasecreta'; 
 
 /**
  * Middleware para verificar la validez del JWT.
