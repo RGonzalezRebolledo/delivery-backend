@@ -24,7 +24,7 @@ const app = express();
 const allowedOrigins = [
     'http://localhost:5173',
     'http://localhost:5174',
-   ' https://deliveryaplication-ioll.vercel.app/'
+    'https://deliveryaplication-ioll.vercel.app'
 ];
 
 // Carga dinámica de orígenes desde variables de entorno
