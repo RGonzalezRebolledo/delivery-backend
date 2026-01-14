@@ -29,11 +29,29 @@ export const getClientOrders = async (req, res) => {
             [clienteId]
         );
 
+        // const orders = result.rows.map(order => ({
+        //     id: order.id,
+        //     date: new Date(order.fecha_pedido).toLocaleDateString('es-ES', { 
+        //         day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' 
+        //     }),
+        //     status: order.estado,
+        //     total: parseFloat(order.total).toFixed(2),
+        //     total_usd: parseFloat(order.total_dolar).toFixed(2),
+        //     address: order.calle ? `${order.calle}` : 'Dirección no disponible',
+        //     receipt: order.nro_recibo,
+        //     typevehicle: order.vehiculo_descript || 'No especificado',
+        //     typeservice: order.servicio_descript || 'Estándar',
+        //     // Desglose con el campo amount_pay
+        //     breakdown: {
+        //         vehicle_base: parseFloat(order.vehiculo_costo || 0).toFixed(2),
+        //         service_extra: parseFloat(order.servicio_costo || 0).toFixed(2)
+        //     }
+        // }));
+
         const orders = result.rows.map(order => ({
             id: order.id,
-            date: new Date(order.fecha_pedido).toLocaleDateString('es-ES', { 
-                day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' 
-            }),
+            // CAMBIO AQUÍ: Envía el valor original de la DB (Postgres/Node lo enviará como ISO string)
+            fecha_pedido: order.fecha_pedido, 
             status: order.estado,
             total: parseFloat(order.total).toFixed(2),
             total_usd: parseFloat(order.total_dolar).toFixed(2),
@@ -41,7 +59,6 @@ export const getClientOrders = async (req, res) => {
             receipt: order.nro_recibo,
             typevehicle: order.vehiculo_descript || 'No especificado',
             typeservice: order.servicio_descript || 'Estándar',
-            // Desglose con el campo amount_pay
             breakdown: {
                 vehicle_base: parseFloat(order.vehiculo_costo || 0).toFixed(2),
                 service_extra: parseFloat(order.servicio_costo || 0).toFixed(2)

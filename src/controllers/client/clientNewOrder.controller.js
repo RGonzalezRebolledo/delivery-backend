@@ -54,40 +54,70 @@ export const createOrder = async (req, res) => {
         const direccionEntregaId = await getOrCreateAddressId(delivery, client, clienteId);
 
         // INSERT corregido con los nombres de tu tabla
+        // const orderQuery = `
+        //     INSERT INTO pedidos (
+        //         cliente_id,             -- $1
+        //         direccion_destino_id,   -- $2 (Corregido: era direccion_entrega_id)
+        //         total,                  -- $3
+        //         estado,                 
+        //         fecha_pedido,           
+        //         total_dolar,            -- $4
+        //         direccion_origen_id,    -- $5
+        //         tipo_servicio_id,       -- $6
+        //         tipo_vehiculo_id,       -- $7
+        //         nro_recibo              -- $8
+        //     ) 
+        //     VALUES ($1, $2, $3, 'pendiente', NOW(), $4, $5, $6, $7, $8)
+        //     RETURNING id;
+        // `;
+
         const orderQuery = `
-            INSERT INTO pedidos (
-                cliente_id,             -- $1
-                direccion_destino_id,   -- $2 (Corregido: era direccion_entrega_id)
-                total,                  -- $3
-                estado,                 
-                fecha_pedido,           
-                total_dolar,            -- $4
-                direccion_origen_id,    -- $5
-                tipo_servicio_id,       -- $6
-                tipo_vehiculo_id,       -- $7
-                nro_recibo              -- $8
-            ) 
-            VALUES ($1, $2, $3, 'pendiente', NOW(), $4, $5, $6, $7, $8)
-            RETURNING id;
-        `;
+        INSERT INTO pedidos (
+            cliente_id, direccion_destino_id, total, estado, 
+            fecha_pedido, -- Columna 
+            total_dolar, direccion_origen_id, 
+            tipo_servicio_id, tipo_vehiculo_id, nro_recibo
+        ) 
+        VALUES ($1, $2, $3, 'pendiente', $9, $4, $5, $6, $7, $8) -- Agregamos $9
+        RETURNING id, fecha_pedido; -- Retornamos la fecha para el front
+    `;
+
+        // const orderResult = await client.query(orderQuery, [
+        //     clienteId,           // $1
+        //     direccionEntregaId,  // $2
+        //     price,               // $3
+        //     price_usd,           // $4
+        //     direccionRecogidaId, // $5
+        //     typeservice,         // $6
+        //     typevehicle,         // $7
+        //     receptpay            // $8
+        // ]);
 
         const orderResult = await client.query(orderQuery, [
-            clienteId,           // $1
-            direccionEntregaId,  // $2
-            price,               // $3
-            price_usd,           // $4
-            direccionRecogidaId, // $5
-            typeservice,         // $6
-            typevehicle,         // $7
-            receptpay            // $8
+            clienteId,          // $1
+            direccionEntregaId, // $2
+            price,              // $3
+            price_usd,          // $4
+            direccionRecogidaId,// $5
+            typeservice,        // $6
+            typevehicle,        // $7
+            receptpay,          // $8
+            new Date()          // $9 <--- ESTO ASEGURA LA HORA CORRECTA DESDE EL SERVIDOR
         ]);
 
         await client.query('COMMIT');
 
-        res.status(201).json({ 
-            message: 'Pedido creado exitosamente.',
-            orderId: orderResult.rows[0].id 
-        });
+        // res.status(201).json({ 
+        //     message: 'Pedido creado exitosamente.',
+        //     orderId: orderResult.rows[0].id 
+        // });
+
+        // Devolvemos la fecha creada para que el front no tenga que adivinar
+    res.status(201).json({ 
+        message: 'Pedido creado exitosamente.',
+        orderId: orderResult.rows[0].id,
+        fecha: orderResult.rows[0].fecha_pedido 
+    });
 
     } catch (error) {
         await client.query('ROLLBACK');
