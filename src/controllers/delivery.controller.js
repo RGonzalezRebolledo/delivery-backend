@@ -4,6 +4,8 @@ import { getDeliveryPrice } from '../services/deliveryPriceService.js';
 
 // URL de la API de la tasa de cambio (DolarVzla)
 const EXTERNAL_RATE_API = 'https://api.dolarvzla.com/public/exchange-rate';
+// Reemplaza esto con tu clave real
+const DOLARVZLA_KEY = 'd419286ffbe7c65652922df241fe35b68dbedd25b9ee9d9600b2d7e56ac5c657';
 
 /**
  * Función auxiliar para obtener la tasa de cambio actual.
@@ -12,7 +14,9 @@ const EXTERNAL_RATE_API = 'https://api.dolarvzla.com/public/exchange-rate';
 const fetchCurrentExchangeRate = async () => {
     try {
         const response = await axios.get(EXTERNAL_RATE_API, {
-            headers: { 'Accept': 'application/json' }
+            headers: { 'Accept': 'application/json',
+            'x-dolarvzla-key': DOLARVZLA_KEY
+        }
         });
         const data = response.data;
 
