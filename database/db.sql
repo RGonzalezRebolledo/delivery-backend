@@ -139,16 +139,6 @@ INSERT INTO usuarios (nombre, email, telefono, tipo, password_hash)
 SELECT 'Administrador Global', 'ramongonzalez101@gmail.com', '999999', 'administrador', crypt('admin1234', gen_salt('bf'))
 WHERE NOT EXISTS (SELECT 1 FROM usuarios WHERE email = 'ramongonzalez101@gmail.com');
 
-
-
-
-
-
-
-
-
-
-
 -- -- 1. LIMPIEZA
 -- DROP VIEW IF EXISTS vista_pedidos_resumen;
 -- DROP TABLE IF EXISTS repartidores_pedidos;

@@ -12,7 +12,7 @@ import routerClientOrders from './routes/client/clientdashboard.route.js';
 import routerCheckSesion from './routes/checkSesion.route.js';
 import routerClientNewOrder from './routes/client/clientNewOrder.route.js';
 import routerExchangeRate from './routes/apis/exchangeRate.route.js';
-import routerCalculateDeliveryCost from './routes/delivery.route.js';
+import routerCalculateDeliveryCost from './routes/calculateCost.route.js';
 import routerClientAddresses from './routes/client/clientaddresses.route.js';
 import routerLoginAdmin from './routes/administrator/loginAdmin.route.js';
 import routerVehicles from './routes/administrator/typeVhicle.route.js';

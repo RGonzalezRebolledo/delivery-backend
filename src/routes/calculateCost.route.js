@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { calculateDeliveryCost } from '../controllers/delivery.controller.js';
+import { calculateDeliveryCost } from '../controllers/calculateCost.controller.js';
 
 const routerCalculateDeliveryCost = Router();
 
