@@ -5,7 +5,7 @@ import axios from 'axios';
  */
 export const getBcvExchangeRate = async (req, res) => {
     // Nueva URL proporcionada
-    const EXTERNAL_API_URL = 'https://api.dolarvzla.com/public/exchange-rate';
+    const EXTERNAL_API_URL = process.env.EXTERNAL_API_URL;
 
     try {
         const response = await axios.get(EXTERNAL_API_URL, {
