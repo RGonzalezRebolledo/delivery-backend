@@ -20,6 +20,7 @@ const BASE_FEE = 1.50;     // Tarifa base inicial
  */
 const fetchCurrentExchangeRate = async () => {
     try {
+        console.log("Token enviado a Mapbox:", process.env.MAPBOX_TOKEN?.substring(0, 5) + "...");
         const response = await axios.get(EXTERNAL_RATE_API, {
             headers: { 
                 'Accept': 'application/json',
