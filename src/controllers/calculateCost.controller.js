@@ -4,13 +4,12 @@ import axios from 'axios';
 const EXTERNAL_RATE_API = 'https://api.dolarvzla.com/public/exchange-rate';
 const DOLARVZLA_KEY = 'd419286ffbe7c65652922df241fe35b68dbedd25b9ee9d9600b2d7e56ac5c657';
 
-// CONFIGURACIÓN DE MAPBOX
-// Reemplaza con tu Token real de Mapbox (empieza por pk.ey...)
-const MAPBOX_TOKEN = 'Tpk.eyJ1IjoicmFtb25nb256YWxlejEwMSIsImEiOiJjbWxmZnZ3M3EwMWh1M2Zva2owYnhrN2UwIn0.C9KJW65YVky5K6KkeZEZAg'; 
+// CONFIGURACIÓN DE MAPBOX - ¡TOKEN CORREGIDO! (Sin la T al principio)
+const MAPBOX_TOKEN = 'pk.eyJ1IjoicmFtb25nb256YWxlejEwMSIsImEiOiJjbWxmZnZ3M3EwMWh1M2Zva2owYnhrN2UwIn0.C9KJW65YVky5K6KkeZEZAg'; 
 
-// LÓGICA DE NEGOCIO (Ajusta estos valores según tus tarifas)
-const PRICE_PER_KM = 0.50; // Ejemplo: 0.50$ por cada kilómetro recorrido
-const BASE_FEE = 1.50;     // Tarifa base inicial (banderazo)
+// LÓGICA DE NEGOCIO
+const PRICE_PER_KM = 0.50; // 0.50$ por cada kilómetro
+const BASE_FEE = 1.50;     // Tarifa base inicial
 
 /**
  * Función auxiliar para obtener la tasa de cambio actual.
@@ -31,7 +30,7 @@ const fetchCurrentExchangeRate = async () => {
         throw new Error('Formato de tasa de cambio incorrecto.');
     } catch (error) {
         console.error("Error al obtener la tasa de cambio:", error.message);
-        return 0.00; // Fallback
+        return 0.00; // Fallback para evitar que el proceso se detenga por completo
     }
 };
 
@@ -40,24 +39,35 @@ const fetchCurrentExchangeRate = async () => {
  * POST /api/delivery/calculate-cost
  */
 export const calculateDeliveryCost = async (req, res) => {
-    // IMPORTANTE: El frontend ahora debe enviar pickupCoords y deliveryCoords como [lng, lat]
     const { pickupAddress, deliveryAddress, pickupCoords, deliveryCoords } = req.body;
 
-    // 1. Validar entradas
+    // 1. Validar entradas básicas
     if (!pickupAddress || !deliveryAddress) {
         return res.status(400).json({ error: 'Las direcciones son obligatorias.' });
     }
 
     if (!pickupCoords || !deliveryCoords) {
         return res.status(400).json({ 
-            error: 'Se requieren coordenadas geográficas para calcular la distancia exacta.' 
+            error: 'Se requieren coordenadas geográficas para el cálculo.' 
         });
     }
 
     try {
-        // 2. Consultar distancia real a Mapbox Directions API
+        // 2. Extraer Lat/Lng con soporte para múltiples formatos [lng, lat] o {lat, lng}
+        const p_lng = Array.isArray(pickupCoords) ? pickupCoords[0] : pickupCoords.lng;
+        const p_lat = Array.isArray(pickupCoords) ? pickupCoords[1] : pickupCoords.lat;
+        
+        const d_lng = Array.isArray(deliveryCoords) ? deliveryCoords[0] : deliveryCoords.lng;
+        const d_lat = Array.isArray(deliveryCoords) ? deliveryCoords[1] : deliveryCoords.lat;
+
+        // Validar que tengamos números válidos
+        if (!p_lng || !p_lat || !d_lng || !d_lat) {
+            return res.status(400).json({ error: 'Formato de coordenadas inválido.' });
+        }
+
+        // 3. Consultar distancia real a Mapbox Directions API
         // Formato: /driving/{lng_origen},{lat_origen};{lng_destino},{lat_destino}
-        const mapboxUrl = `https://api.mapbox.com/directions/v5/mapbox/driving/${pickupCoords[0]},${pickupCoords[1]};${deliveryCoords[0]},${deliveryCoords[1]}?access_token=${MAPBOX_TOKEN}`;
+        const mapboxUrl = `https://api.mapbox.com/directions/v5/mapbox/driving/${p_lng},${p_lat};${d_lng},${d_lat}?access_token=${MAPBOX_TOKEN}`;
         
         const mapboxResponse = await axios.get(mapboxUrl);
 
@@ -69,15 +79,17 @@ export const calculateDeliveryCost = async (req, res) => {
         const distanceMeters = mapboxResponse.data.routes[0].distance;
         const distanceKm = distanceMeters / 1000;
 
-        // 3. Calcular precio en USD
+        // 4. Calcular precio en USD
         // Fórmula: Base + (Kilómetros * Precio por KM)
         const priceUSD = BASE_FEE + (distanceKm * PRICE_PER_KM);
 
-        // 4. Obtener tasa de cambio y calcular en VES
+        // 5. Obtener tasa de cambio y calcular en VES
         const exchangeRate = await fetchCurrentExchangeRate();
-        const priceVES = priceUSD * exchangeRate;
+        
+        // Si la tasa falla (es 0), el costo VES será 0 temporalmente
+        const priceVES = exchangeRate > 0 ? (priceUSD * exchangeRate) : 0;
 
-        // 5. Responder al frontend
+        // 6. Responder al frontend
         res.status(200).json({
             priceUSD: parseFloat(priceUSD.toFixed(2)),
             priceVES: parseFloat(priceVES.toFixed(2)),
@@ -87,11 +99,21 @@ export const calculateDeliveryCost = async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Error en calculateDeliveryCost (Mapbox):", error.message);
+        // Log detallado para depuración en Railway
+        console.error("Error en calculateDeliveryCost:", {
+            message: error.message,
+            status: error.response?.status,
+            data: error.response?.data
+        });
+
+        // Si Mapbox responde con error de Token (401 o 403)
+        if (error.response?.status === 401 || error.response?.status === 403) {
+            return res.status(500).json({ error: 'Error de autenticación con el servicio de mapas.' });
+        }
+
         res.status(500).json({ error: 'Error interno al procesar la ruta y el costo.' });
     }
 };
-
 
 
 
