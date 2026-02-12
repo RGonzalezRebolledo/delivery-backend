@@ -1,11 +1,15 @@
 import axios from 'axios';
 
 // URL de la API de la tasa de cambio (DolarVzla)
-const EXTERNAL_RATE_API = process.env.EXTERNAL_RATE_API;
-const DOLARVZLA_KEY = process.env.DOLARVZLA_KEY;
+// const EXTERNAL_RATE_API = process.env.EXTERNAL_RATE_API;
+// const DOLARVZLA_KEY = process.env.DOLARVZLA_KEY;
 
-// CONFIGURACIÓN DE MAPBOX - ¡TOKEN CORREGIDO! (Sin la T al principio)
-const MAPBOX_TOKEN = process.env.MAPBOX_TOKEN; 
+// // CONFIGURACIÓN DE MAPBOX - ¡TOKEN CORREGIDO! (Sin la T al principio)
+// const MAPBOX_TOKEN = process.env.MAPBOX_TOKEN; 
+
+const EXTERNAL_RATE_API = process.env.EXTERNAL_RATE_API?.trim();
+const DOLARVZLA_KEY = process.env.DOLARVZLA_KEY?.trim();
+const MAPBOX_TOKEN = process.env.MAPBOX_TOKEN?.trim();
 
 // LÓGICA DE NEGOCIO
 const PRICE_PER_KM = 0.50; // 0.50$ por cada kilómetro
