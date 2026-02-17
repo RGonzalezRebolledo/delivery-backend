@@ -57,6 +57,11 @@ pool.on('error', (err) => {
     console.error('❌ Error inesperado en el pool de conexión:', err);
 });
 
+
+
+
+
+
 // import pg from 'pg';
 // import { pgdb } from './config.js';
 

@@ -84,7 +84,7 @@ app.use((err, req, res, next) => {
 });
 
 // --- LEVANTAR SERVIDOR ---
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT || 4000;
 
 // Escuchar en 0.0.0.0 es obligatorio para Railway
 // app.listen(PORT, '0.0.0.0', () => {

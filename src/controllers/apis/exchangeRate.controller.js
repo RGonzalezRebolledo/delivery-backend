@@ -40,7 +40,7 @@ export const getBcvExchangeRate = async (req, res) => {
         return res.status(500).json({ 
             error: 'No se pudo obtener la tasa de cambio externa.',
             // Usamos un fallback cercano al valor real por si acaso
-            fallbackRate: 40.93 
+            fallbackRate: 0.0 
         });
     }
 };
