@@ -3,8 +3,11 @@ import express from 'express';
 import morgan from 'morgan';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
+import cron from 'node-cron';
+import pool from './db.js';
+import { runBcvScraper } from './services/scraperService.js';
 
-// Importación de Rutas
+// --- IMPORTACIÓN DE RUTAS ---
 import routerUsers from './routes/users.route.js';
 import routerLogin from './routes/login.route.js';
 import routerAuth from './routes/auth.route.js';
@@ -20,6 +23,48 @@ import routerServices from './routes/administrator/typeServices.route.js';
 
 const app = express();
 
+// --- LÓGICA DE TASA DE CAMBIO (BCV) ---
+
+// 1. Inicialización (Se ejecuta una vez al levantar el server)
+const initializeExchangeRate = async () => {
+    try {
+        const res = await pool.query('SELECT COUNT(*) FROM exchange_rates');
+        const count = parseInt(res.rows[0].count);
+
+        if (count === 0) {
+            console.log("ℹ️ Base de datos de tasas vacía. Inicializando con valor actual del BCV...");
+            await runBcvScraper();
+        } else {
+            console.log(`✅ Base de datos de tasas lista (Registros: ${count})`);
+        }
+    } catch (error) {
+        console.error("❌ Error al inicializar la tasa:", error.message);
+    }
+};
+
+// 2. Tarea con reintentos para el Cron
+const taskWithRetry = async (attempt = 1) => {
+    const MAX_ATTEMPTS = 3;
+    const RETRY_DELAY = 10 * 60 * 1000;
+
+    console.log(`\n[${new Date().toLocaleString()}] Intentando actualización BCV (Intento ${attempt}/${MAX_ATTEMPTS})...`);
+    const result = await runBcvScraper();
+
+    if (result) {
+        console.log(`✅ Proceso completado exitosamente.`);
+    } else if (attempt < MAX_ATTEMPTS) {
+        console.log(`⚠️ Falló intento ${attempt}. Reintentando en 10 min...`);
+        setTimeout(() => taskWithRetry(attempt + 1), RETRY_DELAY);
+    } else {
+        console.error(`🚨 Se alcanzaron los ${MAX_ATTEMPTS} intentos. Fallo definitivo.`);
+    }
+};
+
+// 3. Programación Cron (9:02 AM y 4:02 PM)
+cron.schedule('2 9,16 * * 1-5', () => {
+    taskWithRetry();
+});
+
 // --- CONFIGURACIÓN DE CORS ---
 const allowedOrigins = [
     'http://localhost:5173',
@@ -27,7 +72,6 @@ const allowedOrigins = [
     'https://deliveryaplication-ioll.vercel.app'
 ];
 
-// Carga dinámica de orígenes desde variables de entorno
 if (process.env.FRONTEND_URL_DEV) {
     process.env.FRONTEND_URL_DEV.split(',').forEach(o => allowedOrigins.push(o.trim()));
 }
@@ -37,12 +81,9 @@ if (process.env.FRONTEND_URL_PROD) {
 
 app.use(cors({
     origin: function (origin, callback) {
-        // !origin permite herramientas como Postman o Thunder Client
         if (!origin || allowedOrigins.includes(origin)) {
             callback(null, true);
         } else {
-            // No bloqueamos con error de servidor para evitar el 502, 
-            // simplemente denegamos el acceso CORS
             console.warn(`⚠️ Origen bloqueado por CORS: ${origin}`);
             callback(null, false); 
         }
@@ -59,7 +100,6 @@ app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 
 // --- RUTAS ---
-// Es buena práctica agruparlas o usar un prefijo como /api si lo deseas
 app.use(routerCheckSesion);
 app.use(routerUsers);
 app.use(routerLogin);
@@ -74,7 +114,6 @@ app.use(routerVehicles);
 app.use(routerServices);
 
 // --- MANEJO DE ERRORES GLOBAL ---
-// Esto evita que el servidor se caiga (502) ante un error no controlado
 app.use((err, req, res, next) => {
     console.error('🔥 Error detectado:', err.stack);
     res.status(err.status || 500).json({
@@ -86,54 +125,129 @@ app.use((err, req, res, next) => {
 // --- LEVANTAR SERVIDOR ---
 const PORT = process.env.PORT || 4000;
 
-// Escuchar en 0.0.0.0 es obligatorio para Railway
-// app.listen(PORT, '0.0.0.0', () => {
-//     console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
-//     console.log('✅ Orígenes permitidos:', allowedOrigins);
-// });
-
-app.listen(PORT, '0.0.0.0', () => {
-    console.log("--- CHECK DE VARIABLES ---");
-    console.log("DATABASE_URL existe:", !!process.env.DATABASE_URL);
-    if (process.env.DATABASE_URL) {
-        console.log("Host detectado:", process.env.DATABASE_URL.split('@')[1]?.split(':')[0]);
-    }
+app.listen(PORT, '0.0.0.0', async () => {
     console.log("--------------------------");
-    console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
+    console.log(`🚀 Servidor en puerto ${PORT}`);
+    
+    // Ejecutamos la inicialización de la tasa al arrancar
+    await initializeExchangeRate();
+    
+    console.log("--------------------------");
 });
 
-
-
-
-// import 'dotenv/config'
-// import express from 'express'
-// // import { pgdb } from './config.js'
-// import morgan from 'morgan'
-// import cors from 'cors' // <--- Única declaración necesaria
-// import routerUsers from './routes/users.route.js'
-// import routerLogin from './routes/login.route.js'
-// import routerAuth from './routes/auth.route.js'
-// import routerClientOrders from './routes/client/clientdashboard.route.js'
-// import routerCheckSesion from './routes/checkSesion.route.js'
-// import routerClientNewOrder from './routes/client/clientNewOrder.route.js'
-// import routerExchangeRate from './routes/apis/exchangeRate.route.js' 
-// import routerCalculateDeliveryCost from './routes/delivery.route.js'
+// import 'dotenv/config';
+// import express from 'express';
+// import morgan from 'morgan';
+// import cors from 'cors';
 // import cookieParser from 'cookie-parser';
-// import routerClientAddresses from './routes/client/clientaddresses.route.js'
-// import routerLoginAdmin from './routes/administrator/loginAdmin.route.js'
-// import routerVehicles from './routes/administrator/typeVhicle.route.js'
-// import routerServices from './routes/administrator/typeServices.route.js'
+// import cron from 'node-cron';
+// import { runBcvScraper } from './services/scraperService.js';
+// import pool from './db.js';
+
+// // Importación de Rutas
+// import routerUsers from './routes/users.route.js';
+// import routerLogin from './routes/login.route.js';
+// import routerAuth from './routes/auth.route.js';
+// import routerClientOrders from './routes/client/clientdashboard.route.js';
+// import routerCheckSesion from './routes/checkSesion.route.js';
+// import routerClientNewOrder from './routes/client/clientNewOrder.route.js';
+// import routerExchangeRate from './routes/apis/exchangeRate.route.js';
+// import routerCalculateDeliveryCost from './routes/calculateCost.route.js';
+// import routerClientAddresses from './routes/client/clientaddresses.route.js';
+// import routerLoginAdmin from './routes/administrator/loginAdmin.route.js';
+// import routerVehicles from './routes/administrator/typeVhicle.route.js';
+// import routerServices from './routes/administrator/typeServices.route.js';
+
+// /**
+//  * Función que intenta ejecutar el scraper.
+//  * Si falla, espera 10 minutos y vuelve a intentar (máximo 3 intentos).
+//  * en esta funcion activo el cambio del dolar del dia segun la hora
+//  */
+// import { runBcvScraper } from './services/scraperService.js';
+// import pool from './db.js';
+
+// // ... (tus otras importaciones)
+
+// const initializeExchangeRate = async () => {
+//     try {
+//         // Verificamos si ya existe al menos un registro
+//         const res = await pool.query('SELECT COUNT(*) FROM exchange_rates');
+//         const count = parseInt(res.rows[0].count);
+
+//         if (count === 0) {
+//             console.log("ℹ️ Base de datos de tasas vacía. Inicializando con valor actual del BCV...");
+//             await runBcvScraper();
+//         } else {
+//             console.log(`✅ Base de datos de tasas lista (Registros: ${count})`);
+//         }
+//     } catch (error) {
+//         console.error("❌ Error al inicializar la tasa:", error.message);
+//     }
+// };
+
+// // Llamamos a la función justo después de conectar la base de datos o al iniciar el server
+// initializeExchangeRate();
+
+// const fetchCurrentExchangeRateFromDB = async () => {
+//     try {
+//         const result = await pool.query(
+//             'SELECT rate FROM exchange_rates ORDER BY updated_at DESC LIMIT 1'
+//         );
+
+//         if (result.rows.length > 0) {
+//             return parseFloat(result.rows[0].rate);
+//         }
+        
+//         // --- FALLBACK DE EMERGENCIA ---
+//         // Si no hay nada en DB y el scraper inicial falló, devolvemos un valor 
+//         // aproximado para que el sistema no dé 0.
+//         console.warn("⚠️ DB vacía. Usando fallback de emergencia.");
+//         return 36.50; // Coloca aquí un valor base realista
+        
+//     } catch (error) {
+//         console.error("⚠️ Error en DB:", error.message);
+//         return 36.50; 
+//     }
+// };
+
+// const taskWithRetry = async (attempt = 1) => {
+//     const MAX_ATTEMPTS = 3;
+//     const RETRY_DELAY = 10 * 60 * 1000; // 10 minutos en milisegundos
+
+//     console.log(`\n[${new Date().toLocaleString()}] Intentando actualización (Intento ${attempt}/${MAX_ATTEMPTS})...`);
+    
+//     const result = await runBcvScraper();
+
+//     if (result) {
+//         console.log(`✅ Proceso completado exitosamente en el intento ${attempt}.`);
+//     } else if (attempt < MAX_ATTEMPTS) {
+//         console.log(`⚠️ Falló el intento ${attempt}. Reintentando en 10 minutos...`);
+        
+//         setTimeout(() => {
+//             taskWithRetry(attempt + 1);
+//         }, RETRY_DELAY);
+//     } else {
+//         console.error(`🚨 Se alcanzaron los ${MAX_ATTEMPTS} intentos. La actualización falló definitivamente.`);
+//         // Aquí podrías enviar un correo o notificación de error si lo deseas
+//     }
+// };
+
+// // Programación: Lunes a Viernes a las 9am y 4pm
+// cron.schedule('2 9,16 * * 1-5', () => {
+//     taskWithRetry();
+// });
+
 
 // const app = express();
 
 // // --- CONFIGURACIÓN DE CORS ---
 // const allowedOrigins = [
-//   'http://localhost:5173', 
-//   'http://localhost:5174',
-//   'https://tu-frontend-en-railway.up.railway.app' // <--- Cambia esto por tu URL real de Railway cuando la tengas
+//     'http://localhost:5173',
+//     'http://localhost:5174',
+//     'https://deliveryaplication-ioll.vercel.app'
 // ];
 
-// // Si tienes variables en el .env, las sumamos
+// // Carga dinámica de orígenes desde variables de entorno
 // if (process.env.FRONTEND_URL_DEV) {
 //     process.env.FRONTEND_URL_DEV.split(',').forEach(o => allowedOrigins.push(o.trim()));
 // }
@@ -142,174 +256,72 @@ app.listen(PORT, '0.0.0.0', () => {
 // }
 
 // app.use(cors({
-//   origin: function (origin, callback) {
-//     // Permitir solicitudes sin origen (como Postman o apps móviles) o si está en la lista
-//     if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-//       callback(null, true);
-//     } else {
-//       callback(new Error('No permitido por CORS'));
-//     }
-//   },
-//   credentials: true, // Vital para las cookies y sesiones
-//   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-//   allowedHeaders: ['Content-Type', 'Authorization']
+//     origin: function (origin, callback) {
+//         // !origin permite herramientas como Postman o Thunder Client
+//         if (!origin || allowedOrigins.includes(origin)) {
+//             callback(null, true);
+//         } else {
+//             // No bloqueamos con error de servidor para evitar el 502, 
+//             // simplemente denegamos el acceso CORS
+//             console.warn(`⚠️ Origen bloqueado por CORS: ${origin}`);
+//             callback(null, false); 
+//         }
+//     },
+//     credentials: true,
+//     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+//     allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
 // }));
 
 // // --- MIDDLEWARES ---
-// app.use(morgan('dev'))
-// app.use(express.json())
-// app.use(express.urlencoded({ extended: false }))
+// app.use(morgan('dev'));
+// app.use(express.json());
+// app.use(express.urlencoded({ extended: false }));
 // app.use(cookieParser());
 
 // // --- RUTAS ---
-// app.use(routerCheckSesion)
-// app.use(routerUsers)
-// app.use(routerLogin)
-// app.use(routerAuth)
-// app.use(routerClientOrders)
-// app.use(routerClientNewOrder)
-// app.use(routerExchangeRate) 
-// app.use(routerCalculateDeliveryCost)  
-// app.use(routerClientAddresses)
-// app.use(routerLoginAdmin)
-// app.use(routerVehicles)
-// app.use(routerServices)
+// // Es buena práctica agruparlas o usar un prefijo como /api si lo deseas
+// app.use(routerCheckSesion);
+// app.use(routerUsers);
+// app.use(routerLogin);
+// app.use(routerAuth);
+// app.use(routerClientOrders);
+// app.use(routerClientNewOrder);
+// app.use(routerExchangeRate);
+// app.use(routerCalculateDeliveryCost);
+// app.use(routerClientAddresses);
+// app.use(routerLoginAdmin);
+// app.use(routerVehicles);
+// app.use(routerServices);
 
-// // Manejo de errores global
+// // --- MANEJO DE ERRORES GLOBAL ---
+// // Esto evita que el servidor se caiga (502) ante un error no controlado
 // app.use((err, req, res, next) => {
-//     console.error(err.stack);
-//     return res.status(500).json({
+//     console.error('🔥 Error detectado:', err.stack);
+//     res.status(err.status || 500).json({
 //         status: "error",
-//         message: err.message,
+//         message: err.message || "Error interno del servidor",
 //     });
 // });
 
 // // --- LEVANTAR SERVIDOR ---
 // const PORT = process.env.PORT || 4000;
 
-// // IMPORTANTE: En Railway es recomendable usar '0.0.0.0'
+// // Escuchar en 0.0.0.0 es obligatorio para Railway
+// // app.listen(PORT, '0.0.0.0', () => {
+// //     console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
+// //     console.log('✅ Orígenes permitidos:', allowedOrigins);
+// // });
+
 // app.listen(PORT, '0.0.0.0', () => {
-//     console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
-//     console.log('Orígenes permitidos:', allowedOrigins);
-// });
-
-
-// import 'dotenv/config'
-// import express from 'express'
-// import { pgdb } from './config.js'
-// import morgan from 'morgan'
-// import cors from 'cors'
-// import routerUsers from './routes/users.route.js'
-// import routerLogin from './routes/login.route.js'
-// import routerAuth from './routes/auth.route.js'
-// import routerClientOrders from './routes/client/clientdashboard.route.js'
-// import routerCheckSesion from './routes/checkSesion.route.js'
-// import routerClientNewOrder from './routes/client/clientNewOrder.route.js'
-// import routerExchangeRate from './routes/apis/exchangeRate.route.js' 
-// import routerCalculateDeliveryCost from './routes/delivery.route.js'
-// // import { clearDatabase } from './db.js';
-// import cookieParser from 'cookie-parser';
-// import routerClientAddresses from './routes/client/clientaddresses.route.js'
-// import routerLoginAdmin from './routes/administrator/loginAdmin.route.js'
-// import routerVehicles from './routes/administrator/typeVhicle.route.js'
-// import routerServices from './routes/administrator/typeServices.route.js'
-
-// const app = express();
-
-// // --- CONFIGURACIÓN DE CORS ---
-// // Dividimos el string del .env por comas y limpiamos espacios en blanco
-// const allowedOrigins = process.env.FRONTEND_URL_DEV 
-//     ? process.env.FRONTEND_URL_DEV.split(',').map(origin => origin.trim()) 
-//     : [];
-
-// // Si tienes una URL de producción, la añadimos al array
-// if (process.env.FRONTEND_URL_PROD) {
-//     allowedOrigins.push(process.env.FRONTEND_URL_PROD.trim());
-// }
-
-// // app.use(cors({
-// //     origin: (origin, callback) => {
-// //         // Permitir solicitudes sin origen (como Postman) o si el origen está en la lista
-// //         if (!origin || allowedOrigins.includes(origin)) {
-// //             callback(null, true);
-// //         } else {
-// //             console.error(`CORS Error: El origen ${origin} no está permitido`);
-// //             callback(new Error('Not allowed by CORS'));
-// //         }
-// //     },
-// //     credentials: true,
-// //     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
-// // }));
-// // -----------------------------
-// const cors = require('cors');
-
-// // ... después de inicializar app = express()
-
-// app.use(cors({
-//   origin: function (origin, callback) {
-//     // Permite cualquier origen en desarrollo o especifica tus URLs
-//     const allowedOrigins = [
-//       'http://localhost:5173', // Puerto común de Vite
-//       'http://localhost:5174', // El puerto que estás usando según tu error
-//       'https://tu-frontend-en-railway.up.railway.app' 
-//     ];
-    
-//     if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-//       callback(null, true);
-//     } else {
-//       callback(new Error('No permitido por CORS'));
+//     console.log("--- CHECK DE VARIABLES ---");
+//     console.log("DATABASE_URL existe:", !!process.env.DATABASE_URL);
+//     if (process.env.DATABASE_URL) {
+//         console.log("Host detectado:", process.env.DATABASE_URL.split('@')[1]?.split(':')[0]);
 //     }
-//   },
-//   credentials: true, // ¡ESTO ES VITAL porque usas withCredentials en el front!
-//   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-//   allowedHeaders: ['Content-Type', 'Authorization']
-// }));
-
-// app.use(morgan('dev'))
-// app.use(express.json())
-// app.use(express.urlencoded({ extended: false }))
-// app.use(cookieParser());
-
-// // Rutas
-// app.use(routerCheckSesion)
-// app.use(routerUsers)
-// app.use(routerLogin)
-// app.use(routerAuth)
-// app.use(routerClientOrders)
-// app.use(routerClientNewOrder)
-// app.use(routerExchangeRate) 
-// app.use(routerCalculateDeliveryCost)  
-// app.use(routerClientAddresses)
-// app.use (routerLoginAdmin)
-// app.use (routerVehicles)
-// app.use (routerServices)
-
-// // Endpoint de mantenimiento
-// // app.delete('/clear-db', async (req, res) => {
-// //     try {
-// //         await clearDatabase();
-// //         res.json({ message: 'Base de datos limpiada' });
-// //     } catch (error) {
-// //         res.status(500).json({ error: error.message });
-// //     }
-// // });
-
-// // Manejo de errores global
-// app.use((err, req, res, next) => {
-//     return res.status(500).json({
-//         status: "error",
-//         message: err.message,
-//     });
-// });
-
-// // app.listen(pgdb.PORT, () => {
-// //     console.log('Conectado en el puerto', pgdb.PORT);
-// //     console.log('Orígenes permitidos:', allowedOrigins);
-// // });
-// // Usa el puerto que asigne Railway (process.env.PORT) o 4000 por defecto
-// const PORT = process.env.PORT || 4000;
-
-// app.listen(PORT, () => {
+//     console.log("--------------------------");
 //     console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
-//     console.log('Orígenes permitidos:', allowedOrigins);
 // });
+
+
+
+

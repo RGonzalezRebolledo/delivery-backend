@@ -1,49 +1,77 @@
-import axios from 'axios';
 
-/**
- * Endpoint para obtener la tasa de cambio desde api.dolarvzla.com
- */
+import pool from '../db.js';
+
 export const getBcvExchangeRate = async (req, res) => {
-    // Nueva URL proporcionada
-    const EXTERNAL_API_URL = process.env.EXTERNAL_API_URL;
-
     try {
-        const response = await axios.get(EXTERNAL_API_URL, {
-            headers: { 'Accept': 'application/json' }
-        });
+        // Consultamos el último registro insertado
+        const result = await pool.query(
+            'SELECT rate, updated_at FROM exchange_rates ORDER BY updated_at DESC LIMIT 1'
+        );
 
-        const data = response.data;
-        
-        // 1. Validamos que la estructura JSON sea la esperada:
-        // { "current": { "usd": 257.9287, ... } }
-        if (data && data.current && data.current.usd) {
-            
-            const rate = data.current.usd; // Extraemos el valor del dólar
-            const date = data.current.date; // Extraemos la fecha
-
-            // 2. Enviamos la respuesta limpia al frontend
+        if (result.rows.length > 0) {
+            const data = result.rows[0];
             return res.status(200).json({
                 currency: 'USD',
-                rate: parseFloat(rate),
-                source: 'API DolarVzla',
-                last_updated: date || new Date().toISOString()
+                rate: parseFloat(data.rate),
+                source: 'BCV (Cache Interno)',
+                last_updated: data.updated_at
             });
         }
-        
-        // Si el API responde pero no tiene el campo 'current.usd'
-        throw new Error('El formato de respuesta del API ha cambiado o es incorrecto.');
+
+        return res.status(404).json({ error: 'No hay tasas registradas aún.' });
 
     } catch (error) {
-        console.error("Error al obtener la tasa de cambio:", error.message);
-        
-        // Devolver una tasa de fallback o un error
-        return res.status(500).json({ 
-            error: 'No se pudo obtener la tasa de cambio externa.',
-            // Usamos un fallback cercano al valor real por si acaso
-            fallbackRate: 0.0 
-        });
+        console.error("Error al obtener tasa local:", error.message);
+        return res.status(500).json({ error: 'Error al consultar la base de datos.' });
     }
 };
+
+// import axios from 'axios';
+
+// /**
+//  * Endpoint para obtener la tasa de cambio desde api.dolarvzla.com
+//  */
+// export const getBcvExchangeRate = async (req, res) => {
+//     // Nueva URL proporcionada
+//     const EXTERNAL_API_URL = process.env.EXTERNAL_API_URL;
+
+//     try {
+//         const response = await axios.get(EXTERNAL_API_URL, {
+//             headers: { 'Accept': 'application/json' }
+//         });
+
+//         const data = response.data;
+        
+//         // 1. Validamos que la estructura JSON sea la esperada:
+//         // { "current": { "usd": 257.9287, ... } }
+//         if (data && data.current && data.current.usd) {
+            
+//             const rate = data.current.usd; // Extraemos el valor del dólar
+//             const date = data.current.date; // Extraemos la fecha
+
+//             // 2. Enviamos la respuesta limpia al frontend
+//             return res.status(200).json({
+//                 currency: 'USD',
+//                 rate: parseFloat(rate),
+//                 source: 'API DolarVzla',
+//                 last_updated: date || new Date().toISOString()
+//             });
+//         }
+        
+//         // Si el API responde pero no tiene el campo 'current.usd'
+//         throw new Error('El formato de respuesta del API ha cambiado o es incorrecto.');
+
+//     } catch (error) {
+//         console.error("Error al obtener la tasa de cambio:", error.message);
+        
+//         // Devolver una tasa de fallback o un error
+//         return res.status(500).json({ 
+//             error: 'No se pudo obtener la tasa de cambio externa.',
+//             // Usamos un fallback cercano al valor real por si acaso
+//             fallbackRate: 0.0 
+//         });
+//     }
+// };
 
 
 // import axios from 'axios';
