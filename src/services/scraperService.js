@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { pool } from '../db.js'; // Asegúrate de que la importación coincida con tu export de db.js
+import { pool } from '../db.js';
 
 export const runBcvScraper = async () => {
     try {
@@ -9,31 +9,24 @@ export const runBcvScraper = async () => {
             timeout: 10000 
         });
 
-        /* La respuesta de esta API tiene este formato:
-           {
-             "compra": 36.50,
-             "venta": 36.60,
-             "promedio": 36.55,
-             "fechaActualizacion": "2024-..."
-           }
-        */
-
         const cleanRate = parseFloat(data.promedio);
+        // Extraemos la fecha oficial de actualización de la API
+        const apiDate = data.fechaActualizacion; 
 
         if (!cleanRate || isNaN(cleanRate)) {
             console.error("❌ La API no devolvió un valor numérico válido.");
             return null;
         }
 
-        console.log(`🔢 Tasa recibida: ${cleanRate} Bs.`);
+        console.log(`🔢 Tasa recibida: ${cleanRate} Bs. (Oficial: ${apiDate})`);
 
-        // Guardar en PostgreSQL
+        // Guardar en PostgreSQL usando la fecha de la API ($3)
         await pool.query(
-            'INSERT INTO exchange_rates (rate, currency, updated_at) VALUES ($1, $2, NOW())',
-            [cleanRate, 'USD']
+            'INSERT INTO exchange_rates (rate, currency, updated_at) VALUES ($1, $2, $3)',
+            [cleanRate, 'USD', apiDate]
         );
 
-        console.log("✅ Tasa guardada exitosamente en la base de datos.");
+        console.log("✅ Tasa guardada exitosamente con la fecha oficial de la API.");
         return cleanRate;
 
     } catch (error) {
@@ -46,9 +39,6 @@ export const runBcvScraper = async () => {
         return null;
     }
 };
-
-
-
 
 // import axios from 'axios';
 // import * as cheerio from 'cheerio';
