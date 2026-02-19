@@ -4,7 +4,7 @@ import morgan from 'morgan';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import cron from 'node-cron';
-import pool from './db.js';
+import {pool} from './db.js';
 import { runBcvScraper } from './services/scraperService.js';
 
 // --- IMPORTACIÓN DE RUTAS ---
