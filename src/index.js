@@ -129,11 +129,22 @@ app.listen(PORT, '0.0.0.0', async () => {
     console.log("--------------------------");
     console.log(`🚀 Servidor en puerto ${PORT}`);
     
-    // Ejecutamos la inicialización de la tasa al arrancar
-    await initializeExchangeRate();
+    // USAR AWAIT AQUÍ ES VITAL
+    await initializeExchangeRate(); 
     
     console.log("--------------------------");
 });
+
+
+// app.listen(PORT, '0.0.0.0', async () => {
+//     console.log("--------------------------");
+//     console.log(`🚀 Servidor en puerto ${PORT}`);
+    
+//     // Ejecutamos la inicialización de la tasa al arrancar
+//     await initializeExchangeRate();
+    
+//     console.log("--------------------------");
+// });
 
 // import 'dotenv/config';
 // import express from 'express';

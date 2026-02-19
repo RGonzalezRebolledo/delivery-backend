@@ -1,74 +1,67 @@
+
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import {pool} from '../db.js';
 
 export const runBcvScraper = async () => {
     try {
+        console.log("🌐 Conectando al portal del BCV...");
         const { data } = await axios.get('https://www.bcv.org.ve/', {
             headers: { 'User-Agent': 'Mozilla/5.0' },
-            timeout: 8000 
+            timeout: 10000 
         });
 
         const $ = cheerio.load(data);
+        // Intentamos obtener el texto del contenedor del dólar
         const rateRaw = $('#dolar strong').text().trim();
         
-        if (!rateRaw) return null; // Devuelve null para disparar el reintento
+        console.log(`Buscando selector #dolar strong... Resultado: "${rateRaw}"`);
+
+        if (!rateRaw) {
+            console.error("❌ No se encontró el texto del dólar en el HTML.");
+            return null;
+        }
 
         const cleanRate = parseFloat(rateRaw.replace('.', '').replace(',', '.'));
-        
+        console.log(`🔢 Tasa procesada: ${cleanRate}`);
+
+        // IMPORTANTE: Verifica que estés usando { pool } o pool según tu archivo db.js
         await pool.query(
-            'INSERT INTO exchange_rates (rate, updated_at) VALUES ($1, NOW())',
-            [cleanRate]
+            'INSERT INTO exchange_rates (rate, currency, updated_at) VALUES ($1, $2, NOW())',
+            [cleanRate, 'USD']
         );
 
-        return cleanRate; // Éxito
+        console.log("✅ Tasa guardada exitosamente en PostgreSQL.");
+        return cleanRate;
     } catch (error) {
-        return null; // Error de conexión o servidor disparará el reintento
+        console.error("❌ Error detallado en Scraper:", error.message);
+        return null;
     }
 };
 
-// export const runBcvScraper = async () => {
-//     const timestamp = new Date().toLocaleString();
-//     console.log(`\n[${timestamp}] 🕒 Iniciando actualización programada...`);
 
+
+// export const runBcvScraper = async () => {
 //     try {
 //         const { data } = await axios.get('https://www.bcv.org.ve/', {
 //             headers: { 'User-Agent': 'Mozilla/5.0' },
-//             timeout: 10000 // Si el BCV tarda más de 10s, cancelamos
+//             timeout: 8000 
 //         });
 
 //         const $ = cheerio.load(data);
 //         const rateRaw = $('#dolar strong').text().trim();
         
-//         if (!rateRaw) {
-//             console.error(`[${timestamp}] ❌ Error: No se encontró el elemento #dolar en el HTML del BCV.`);
-//             return null;
-//         }
+//         if (!rateRaw) return null; // Devuelve null para disparar el reintento
 
 //         const cleanRate = parseFloat(rateRaw.replace('.', '').replace(',', '.'));
-
-//         // Guardar en DB
-//         const dbResult = await pool.query(
-//             'INSERT INTO exchange_rates (rate, updated_at) VALUES ($1, NOW()) RETURNING id',
+        
+//         await pool.query(
+//             'INSERT INTO exchange_rates (rate, updated_at) VALUES ($1, NOW())',
 //             [cleanRate]
 //         );
 
-//         console.log(`[${timestamp}] ✅ ÉXITO: Tasa guardada (ID: ${dbResult.rows[0].id})`);
-//         console.log(`[${timestamp}] 💵 Valor: ${cleanRate} Bs.\n`);
-
-//         return cleanRate;
-
+//         return cleanRate; // Éxito
 //     } catch (error) {
-//         console.error(`[${timestamp}] 🚨 ERROR CRÍTICO en el Scraper:`);
-//         if (error.response) {
-//             // El servidor del BCV respondió con error (ej. 500 o 404)
-//             console.error(`   Status: ${error.response.status}`);
-//         } else if (error.request) {
-//             // No hubo respuesta (BCV caído o sin internet)
-//             console.error(`   Sin respuesta del servidor (Timeout/Conexión)`);
-//         } else {
-//             console.error(`   Mensaje: ${error.message}`);
-//         }
-//         return null;
+//         return null; // Error de conexión o servidor disparará el reintento
 //     }
 // };
