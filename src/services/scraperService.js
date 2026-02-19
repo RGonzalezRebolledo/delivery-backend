@@ -1,6 +1,6 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
-import pool from '../db.js';
+import {pool} from '../db.js';
 
 export const runBcvScraper = async () => {
     try {

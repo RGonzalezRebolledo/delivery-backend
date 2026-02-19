@@ -1,5 +1,5 @@
 import axios from 'axios';
-import pool from '../db.js'; // Asegúrate de que la ruta a tu conexión de PostgreSQL sea correcta
+import {pool} from '../db.js'; // Asegúrate de que la ruta a tu conexión de PostgreSQL sea correcta
 
 const MAPBOX_TOKEN = process.env.MAPBOX_TOKEN?.trim();
 
