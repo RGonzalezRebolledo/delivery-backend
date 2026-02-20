@@ -3,7 +3,7 @@ import {pool} from '../../db.js';
 
 export const getBcvExchangeRate = async (req, res) => {
     try {
-        // Consultamos el último registro insertado
+        // Consultamos el último registro insertado en la base de datos
         const result = await pool.query(
             'SELECT rate, updated_at FROM exchange_rates ORDER BY updated_at DESC LIMIT 1'
         );
