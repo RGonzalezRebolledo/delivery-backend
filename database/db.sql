@@ -16,11 +16,18 @@ DROP TABLE IF EXISTS productos;
 DROP TABLE IF EXISTS repartidores; 
 DROP TABLE IF EXISTS tipos_vehiculos;
 DROP TABLE IF EXISTS tipos_servicios;
+DROP TABLE IF EXISTS exchange_rates;
 DROP TABLE IF EXISTS usuarios CASCADE; 
 
 -- ------------------------------------------------------------------
 -- 2. TABLAS MAESTRAS
 -- ------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS exchange_rates (
+    id SERIAL PRIMARY KEY,
+    rate NUMERIC(10, 4) NOT NULL,
+    currency VARCHAR(10) DEFAULT 'USD',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
 CREATE TABLE tipos_vehiculos (
     id SERIAL PRIMARY KEY,
@@ -66,7 +73,8 @@ CREATE TABLE direcciones (
     ciudad VARCHAR(100) NOT NULL,
     codigo_postal VARCHAR(10),
     latitud DECIMAL(9, 6),
-    longitud DECIMAL(9, 6)
+    longitud DECIMAL(9, 6),
+    municipio VARCHAR(100) NOT NULL 
 );
 
 CREATE TABLE pedidos (
@@ -80,7 +88,9 @@ CREATE TABLE pedidos (
     fecha_pedido TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP, -- Cambio a TZ
     estado VARCHAR(20) DEFAULT 'pendiente' CHECK (estado IN ('pendiente', 'en_camino', 'entregado', 'cancelado')),
     total DECIMAL(10, 2) NOT NULL,
-    total_dolar DECIMAL(10, 2) DEFAULT 0
+    total_dolar DECIMAL(10, 2) DEFAULT 0,
+    municipio_origen VARCHAR(100),
+  municipio_destino VARCHAR(100)
 );
 
 CREATE TABLE repartidores (

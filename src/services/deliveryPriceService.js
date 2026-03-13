@@ -35,7 +35,7 @@ const determineZone = (address) => {
 
     // ZONA A (Ejemplo: Distritos Centrales, Alta Concentración Comercial)
     if (
-        normalizedAddress.includes('san fernando') || 
+        normalizedAddress.includes('San Fernando') || 
         normalizedAddress.includes('av caracas') || 
         normalizedAddress.includes('av carabobo') ||
         normalizedAddress.includes('av miranda') ||
@@ -58,7 +58,7 @@ const determineZone = (address) => {
 
     // ZONA C (Ejemplo: Distritos Periféricos o con Acceso más complejo)
     if (
-        normalizedAddress.includes('petare') || 
+        normalizedAddress.includes('Achaguas') || 
         normalizedAddress.includes('guarenas') || 
         normalizedAddress.includes('el valle')
     ) {

@@ -7,28 +7,28 @@ import { pool } from '../../db.js';
  * @param {object} client La instancia del cliente de la pool de PG (dentro de la transacción).
  * @param {number} clienteId El ID del usuario asociado a la dirección.
  * @returns {number} El ID de la dirección (existente o nueva).
+  * @param {string} municipality - El municipio seleccionado del dropdown.
  */
-const getOrCreateAddressId = async (address, client, clienteId) => {
-    // 1. Intentar encontrar la dirección existente (por calle y usuario)
+const getOrCreateAddressId = async (address, municipality, client, clienteId) => {
+    // 1. Intentar encontrar la dirección existente (por calle, municipio y usuario)
     const checkQuery = `
         SELECT id FROM direcciones 
-        WHERE usuario_id = $1 AND calle ILIKE $2; -- ILIKE para búsqueda insensible a mayúsculas/minúsculas
+        WHERE usuario_id = $1 AND calle ILIKE $2 AND municipio ILIKE $3;
     `;
-    const checkResult = await client.query(checkQuery, [clienteId, address]);
+    const checkResult = await client.query(checkQuery, [clienteId, address, municipality]);
 
     if (checkResult.rows.length > 0) {
-        // La dirección ya existe, devolver su ID
         return checkResult.rows[0].id;
     }
 
-    // 2. La dirección NO existe, insertarla
+    // 2. La dirección NO existe, insertarla con su municipio
     const insertQuery = `
-        INSERT INTO direcciones (usuario_id, calle, ciudad) 
-        VALUES ($1, $2, $3) 
+        INSERT INTO direcciones (usuario_id, calle, municipio, ciudad) 
+        VALUES ($1, $2, $3, $4) 
         RETURNING id;
     `;
-    // Usamos 'Desconocida' como valor por defecto para 'ciudad'
-    const insertResult = await client.query(insertQuery, [clienteId, address, 'Desconocida']); 
+    // Usamos 'San Fernando' como ciudad por defecto o el mismo municipio
+    const insertResult = await client.query(insertQuery, [clienteId, address, municipality, municipality]); 
     
     return insertResult.rows[0].id;
 };
@@ -38,11 +38,13 @@ const getOrCreateAddressId = async (address, client, clienteId) => {
  
 export const createOrder = async (req, res) => {
     const clienteId = req.userId; 
-    const { pickup, delivery, price, price_usd, typevehicle, typeservice, receptpay } = req.body;
+    const { pickup, pickupMunicipality, delivery, deliveryMunicipality, price, price_usd, typevehicle, typeservice, receptpay } = req.body;
 
-    if (!clienteId || !pickup || !delivery || !typevehicle || !typeservice || !receptpay || price === undefined) {
-        return res.status(400).json({ error: 'Faltan campos obligatorios para crear el pedido.' });
-    }
+// Validación de campos obligatorios
+if (!clienteId || !pickup || !pickupMunicipality || !delivery || !deliveryMunicipality || 
+    !typevehicle || !typeservice || !receptpay || price === undefined) {
+    return res.status(400).json({ error: 'Faltan campos obligatorios para crear el pedido.' });
+}
 
     const client = await pool.connect();
 
@@ -50,60 +52,41 @@ export const createOrder = async (req, res) => {
         await client.query('BEGIN');
 
         // Procesar direcciones
-        const direccionRecogidaId = await getOrCreateAddressId(pickup, client, clienteId);
-        const direccionEntregaId = await getOrCreateAddressId(delivery, client, clienteId);
-
-        // INSERT corregido con los nombres de tu tabla
-        // const orderQuery = `
-        //     INSERT INTO pedidos (
-        //         cliente_id,             -- $1
-        //         direccion_destino_id,   -- $2 (Corregido: era direccion_entrega_id)
-        //         total,                  -- $3
-        //         estado,                 
-        //         fecha_pedido,           
-        //         total_dolar,            -- $4
-        //         direccion_origen_id,    -- $5
-        //         tipo_servicio_id,       -- $6
-        //         tipo_vehiculo_id,       -- $7
-        //         nro_recibo              -- $8
-        //     ) 
-        //     VALUES ($1, $2, $3, 'pendiente', NOW(), $4, $5, $6, $7, $8)
-        //     RETURNING id;
-        // `;
+        const direccionRecogidaId = await getOrCreateAddressId(pickup, pickupMunicipality, client, clienteId);
+        const direccionEntregaId = await getOrCreateAddressId(delivery, deliveryMunicipality, client, clienteId);
 
         const orderQuery = `
         INSERT INTO pedidos (
-            cliente_id, direccion_destino_id, total, estado, 
-            fecha_pedido, -- Columna 
-            total_dolar, direccion_origen_id, 
-            tipo_servicio_id, tipo_vehiculo_id, nro_recibo
+            cliente_id,           -- $1
+            direccion_origen_id,  -- $2
+            direccion_destino_id, -- $3
+            municipio_origen,     -- $4 (Nuevo)
+            municipio_destino,    -- $5 (Nuevo)
+            total,                -- $6
+            total_dolar,          -- $7
+            tipo_vehiculo_id,     -- $8
+            tipo_servicio_id,     -- $9
+            nro_recibo,           -- $10
+            fecha_pedido,         -- $11
+            estado                -- Valor fijo: 'pendiente'
         ) 
-        VALUES ($1, $2, $3, 'pendiente', $9, $4, $5, $6, $7, $8) -- Agregamos $9
-        RETURNING id, fecha_pedido; -- Retornamos la fecha para el front
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pendiente') 
+        RETURNING id, fecha_pedido;
     `;
-
-        // const orderResult = await client.query(orderQuery, [
-        //     clienteId,           // $1
-        //     direccionEntregaId,  // $2
-        //     price,               // $3
-        //     price_usd,           // $4
-        //     direccionRecogidaId, // $5
-        //     typeservice,         // $6
-        //     typevehicle,         // $7
-        //     receptpay            // $8
-        // ]);
-
-        const orderResult = await client.query(orderQuery, [
-            clienteId,          // $1
-            direccionEntregaId, // $2
-            price,              // $3
-            price_usd,          // $4
-            direccionRecogidaId,// $5
-            typeservice,        // $6
-            typevehicle,        // $7
-            receptpay,          // $8
-            new Date()          // $9 <--- ESTO ASEGURA LA HORA CORRECTA DESDE EL SERVIDOR
-        ]);
+    
+    const orderResult = await client.query(orderQuery, [
+        clienteId,            // $1
+        direccionRecogidaId,  // $2
+        direccionEntregaId,   // $3
+        pickupMunicipality,   // $4
+        deliveryMunicipality,  // $5
+        price,                // $6 (Bs)
+        price_usd,            // $7 (USD)
+        typevehicle,          // $8
+        typeservice,          // $9
+        receptpay,            // $10
+        new Date()            // $11
+    ]);
 
         await client.query('COMMIT');
 
