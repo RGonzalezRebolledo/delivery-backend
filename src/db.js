@@ -26,9 +26,6 @@ import 'dotenv/config';
 // });
 
 
-
-
-
 // import pg from 'pg';
 
 // Prioridad absoluta a DATABASE_URL (la variable que Railway crea automáticamente)

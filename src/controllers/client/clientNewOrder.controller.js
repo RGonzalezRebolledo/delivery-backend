@@ -1,6 +1,6 @@
 
 import { pool } from '../../db.js';
-
+import { verifyMercantilPayment } from '../../services/payment.service.js';
 /**
  * Función auxiliar para buscar una dirección existente o crear una nueva.
  * @param {string} address La calle a buscar/insertar.
@@ -33,232 +33,312 @@ const getOrCreateAddressId = async (address, municipality, client, clienteId) =>
     return insertResult.rows[0].id;
 };
 
-
-//  Controlador para crear un nuevo pedido (Order).
- 
 export const createOrder = async (req, res) => {
     const clienteId = req.userId; 
-    const { pickup, pickupMunicipality, delivery, deliveryMunicipality, price, price_usd, typevehicle, typeservice, receptpay } = req.body;
+    const { 
+        pickup, pickupMunicipality, 
+        delivery, deliveryMunicipality, 
+        price, price_usd, 
+        typevehicle, typeservice, 
+        receptpay, 
+        payerPhone, 
+        exchangeRate 
+    } = req.body;
 
-// Validación de campos obligatorios
-if (!clienteId || !pickup || !pickupMunicipality || !delivery || !deliveryMunicipality || 
-    !typevehicle || !typeservice || !receptpay || price === undefined) {
-    return res.status(400).json({ error: 'Faltan campos obligatorios para crear el pedido.' });
-}
+    if (!clienteId || !receptpay || !payerPhone || !price || !exchangeRate) {
+        return res.status(400).json({ error: 'Faltan datos de pago o referencia bancaria.' });
+    }
 
     const client = await pool.connect();
 
     try {
+        // --- PASO 1: CONSULTAR AL BANCO ---
+        const paymentData = {
+            phone: payerPhone,
+            reference: receptpay,
+            amount: price,
+            date: new Date().toISOString().split('T')[0]
+        };
+
+        const bankVerification = await verifyMercantilPayment(paymentData);
+
+        // --- PASO 2: INICIAR DB TRANSACCIÓN ---
         await client.query('BEGIN');
 
-        // Procesar direcciones
+        // Procesar direcciones (esto lo hacemos igual para tenerlas)
         const direccionRecogidaId = await getOrCreateAddressId(pickup, pickupMunicipality, client, clienteId);
         const direccionEntregaId = await getOrCreateAddressId(delivery, deliveryMunicipality, client, clienteId);
 
-        const orderQuery = `
-        INSERT INTO pedidos (
-            cliente_id,           -- $1
-            direccion_origen_id,  -- $2
-            direccion_destino_id, -- $3
-            municipio_origen,     -- $4 (Nuevo)
-            municipio_destino,    -- $5 (Nuevo)
-            total,                -- $6
-            total_dolar,          -- $7
-            tipo_vehiculo_id,     -- $8
-            tipo_servicio_id,     -- $9
-            nro_recibo,           -- $10
-            fecha_pedido,         -- $11
-            estado                -- Valor fijo: 'pendiente'
-        ) 
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pendiente') 
-        RETURNING id, fecha_pedido;
-    `;
-    
-    const orderResult = await client.query(orderQuery, [
-        clienteId,            // $1
-        direccionRecogidaId,  // $2
-        direccionEntregaId,   // $3
-        pickupMunicipality,   // $4
-        deliveryMunicipality,  // $5
-        price,                // $6 (Bs)
-        price_usd,            // $7 (USD)
-        typevehicle,          // $8
-        typeservice,          // $9
-        receptpay,            // $10
-        new Date()            // $11
-    ]);
+        // --- PASO 3: SI EL PAGO FALLÓ ---
+        if (!bankVerification.success) {
+            // No creamos la orden, pero SÍ dejamos rastro en payments como 'fallido'
+            const failedPaymentQuery = `
+                INSERT INTO payments (
+                    cliente_id, referencia_bancaria, 
+                    telefono_pagador, monto_ves, tasa_aplicada, 
+                    estado_pago, mensaje_respuesta_banco
+                ) 
+                VALUES ($1, $2, $3, $4, $5, 'fallido', $6);
+            `;
 
+            await client.query(failedPaymentQuery, [
+                clienteId, 
+                receptpay, 
+                payerPhone, 
+                price, 
+                exchangeRate, 
+                bankVerification.message || 'El banco no confirmó la transacción.'
+            ]);
+
+            // Guardamos el registro fallido en la base de datos
+            await client.query('COMMIT'); 
+
+            // Devolvemos el error al frontend para que el usuario sepa que no pasó
+            return res.status(402).json({ 
+                error: 'Pago no verificado.', 
+                detalle: bankVerification.message 
+            });
+        }
+
+        // --- PASO 4: SI EL PAGO FUE EXITOSO ---
+        // Insertamos el pedido
+        const orderQuery = `
+            INSERT INTO pedidos (
+                cliente_id, direccion_origen_id, direccion_destino_id, 
+                municipio_origen, municipio_destino, total, total_dolar, 
+                tipo_vehiculo_id, tipo_servicio_id, nro_recibo, 
+                fecha_pedido, estado, pago_confirmado
+            ) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pendiente', TRUE) 
+            RETURNING id, fecha_pedido;
+        `;
+        
+        const orderResult = await client.query(orderQuery, [
+            clienteId, direccionRecogidaId, direccionEntregaId,
+            pickupMunicipality, deliveryMunicipality, price, price_usd,
+            typevehicle, typeservice, receptpay, new Date()
+        ]);
+
+        const newOrderId = orderResult.rows[0].id;
+
+        // Insertamos el registro de pago exitoso AMARRADO al pedido
+        const successPaymentQuery = `
+            INSERT INTO payments (
+                pedido_id, cliente_id, referencia_bancaria, 
+                telefono_pagador, monto_ves, tasa_aplicada, 
+                estado_pago, bank_tx_id
+            ) 
+            VALUES ($1, $2, $3, $4, $5, $6, 'completado', $7);
+        `;
+
+        await client.query(successPaymentQuery, [
+            newOrderId, 
+            clienteId, 
+            receptpay, 
+            payerPhone, 
+            price, 
+            exchangeRate, 
+            bankVerification.data?.txId || 'API_MERCANTIL'
+        ]);
+
+        // Guardamos todo
         await client.query('COMMIT');
 
-        // res.status(201).json({ 
-        //     message: 'Pedido creado exitosamente.',
-        //     orderId: orderResult.rows[0].id 
-        // });
-
-        // Devolvemos la fecha creada para que el front no tenga que adivinar
-    res.status(201).json({ 
-        message: 'Pedido creado exitosamente.',
-        orderId: orderResult.rows[0].id,
-        fecha: orderResult.rows[0].fecha_pedido 
-    });
+        res.status(201).json({ 
+            message: 'Pago verificado y pedido creado exitosamente.',
+            orderId: newOrderId,
+            fecha: orderResult.rows[0].fecha_pedido 
+        });
 
     } catch (error) {
         await client.query('ROLLBACK');
-        console.error("Error REAL en la base de datos:", error.message); // Mira esto en tu terminal
-        res.status(500).json({ error: 'Error interno del servidor.', detalle: error.message });
+        console.error("Error en flujo de orden/pago:", error.message);
+        res.status(500).json({ error: 'Error al procesar el pedido.', detalle: error.message });
     } finally {
         client.release();
     }
 };
 
 
-
 // export const createOrder = async (req, res) => {
-//     // 1. Extraer ID del cliente del token y datos del body
-    
 //     const clienteId = req.userId; 
-//     const { pickup, delivery, price, price_usd, typevehicle, typeservice, receptpay } = req.body;
+//     const { 
+//         pickup, pickupMunicipality, 
+//         delivery, deliveryMunicipality, 
+//         price, price_usd, 
+//         typevehicle, typeservice, 
+//         receptpay, // Este es el número de referencia
+//         payerPhone, // 💡 Nuevo: Teléfono del que hizo el pago móvil
+//         exchangeRate // 💡 Nuevo: Tasa que el front está usando del context
+//     } = req.body;
 
-//     if (!clienteId || !pickup || !delivery || !typevehicle || !typeservice || !receptpay || price === undefined) {
-//         return res.status(400).json({ error: 'Faltan campos obligatorios para crear el pedido.' });
+//     // Validación extendida
+//     if (!clienteId || !receptpay || !payerPhone || !price || !exchangeRate) {
+//         return res.status(400).json({ error: 'Faltan datos de pago o referencia bancaria.' });
 //     }
 
 //     const client = await pool.connect();
 
 //     try {
-//         await client.query('BEGIN'); // Iniciar la transacción
+//         // --- PASO 1: VERIFICACIÓN BANCARIA (Antes de tocar la DB) ---
+//         // Preparamos los datos para Mercantil
+//         const paymentData = {
+//             phone: payerPhone,
+//             reference: receptpay,
+//             amount: price, // Monto en Bs
+//             date: new Date().toISOString().split('T')[0] // YYYY-MM-DD
+//         };
 
-//         // 2. PROCESAR Dirección de Recogida (Origen)
-//         // Reutiliza la dirección si ya existe, sino, la crea.
-//         const direccionRecogidaId = await getOrCreateAddressId(pickup, client, clienteId);
+//         const bankVerification = await verifyMercantilPayment(paymentData);
+
+//         if (!bankVerification.success) {
+//             return res.status(402).json({ 
+//                 error: 'Pago no verificado.', 
+//                 detalle: bankVerification.message || 'El banco no confirmó la transacción.' 
+//             });
+//         }
+
+//         // --- PASO 2: PROCESO EN BASE DE DATOS ---
+//         await client.query('BEGIN');
+
+//         // Procesar direcciones
+//         const direccionRecogidaId = await getOrCreateAddressId(pickup, pickupMunicipality, client, clienteId);
+//         const direccionEntregaId = await getOrCreateAddressId(delivery, deliveryMunicipality, client, clienteId);
+
+//         // Insertar Pedido
+//         const orderQuery = `
+//             INSERT INTO pedidos (
+//                 cliente_id, direccion_origen_id, direccion_destino_id, 
+//                 municipio_origen, municipio_destino, total, total_dolar, 
+//                 tipo_vehiculo_id, tipo_servicio_id, nro_recibo, 
+//                 fecha_pedido, estado, pago_confirmado
+//             ) 
+//             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pendiente', TRUE) 
+//             RETURNING id, fecha_pedido;
+//         `;
         
-//         // 3. PROCESAR Dirección de Entrega (Destino)
-//         // Reutiliza la dirección si ya existe, sino, la crea.
-//         const direccionEntregaId = await getOrCreateAddressId(delivery, client, clienteId);
-
-//         // 4. Insertar el Nuevo Pedido en la tabla 'pedidos'
-//         // NOTA: Usé 'total_dolar' y corregí la sintaxis del INSERT
-//         const orderQuery = `
-//             INSERT INTO pedidos (
-//                 cliente_id, 
-//                 direccion_destino_id,       -- ID de la dirección de entrega (Destino)
-//                 total, 
-//                 estado, 
-//                 fecha_pedido,
-//                 total_dolar,                -- Usando el nombre correcto
-//                 direccion_origen_id,         -- Asumiendo que esta es la ID de Recogida (Origen)
-//                 tipo_servicio_id,
-//                 tipo_vehiculo_id,
-//                 nro_recibo
-//             ) 
-//             VALUES ($1, $2, $3, 'pendiente', NOW(), $4, $5, $6, $7, $8)
-//             RETURNING id;
-//         `;
 //         const orderResult = await client.query(orderQuery, [
-//             clienteId, 
-//             direccionEntregaId,     // $2: ID de Destino (Delivery)
-//             price,                  // $3: Total en moneda local
-//             price_usd,              // $4: Total en Dólar (total_dolar)
-//             direccionRecogidaId,    // $5: ID de Origen (Pickup)
-//             typeservice,
-//             typevehicle,
-//             receptpay
+//             clienteId, direccionRecogidaId, direccionEntregaId,
+//             pickupMunicipality, deliveryMunicipality, price, price_usd,
+//             typevehicle, typeservice, receptpay, new Date()
 //         ]);
 
-//         await client.query('COMMIT'); // Confirmar la transacción
+//         const newOrderId = orderResult.rows[0].id;
+
+//         // --- PASO 3: REGISTRO DEL PAGO EN LA TABLA PAYMENTS ---
+//         const paymentQuery = `
+//             INSERT INTO payments (
+//                 pedido_id, cliente_id, referencia_bancaria, 
+//                 telefono_pagador, monto_ves, tasa_aplicada, 
+//                 estado_pago, bank_tx_id
+//             ) 
+//             VALUES ($1, $2, $3, $4, $5, $6, 'completado', $7);
+//         `;
+
+//         await client.query(paymentQuery, [
+//             newOrderId, 
+//             clienteId, 
+//             receptpay, 
+//             payerPhone, 
+//             price, 
+//             exchangeRate, 
+//             bankVerification.data?.txId || 'API_MERCANTIL' // ID retornado por el banco
+//         ]);
+
+//         await client.query('COMMIT');
 
 //         res.status(201).json({ 
-//             message: 'Pedido creado exitosamente y en espera de Conductor.',
-//             orderId: orderResult.rows[0].id 
+//             message: 'Pago verificado y pedido creado exitosamente.',
+//             orderId: newOrderId,
+//             fecha: orderResult.rows[0].fecha_pedido 
 //         });
 
 //     } catch (error) {
-//         await client.query('ROLLBACK'); // Revertir si algo falla
-//         console.error("Error en la transacción al crear el pedido:", error);
-//         res.status(500).json({ error: 'Error interno del servidor al procesar el pedido.' });
+//         await client.query('ROLLBACK');
+//         console.error("Error en flujo de orden/pago:", error.message);
+//         res.status(500).json({ error: 'Error al procesar el pedido.', detalle: error.message });
 //     } finally {
 //         client.release();
 //     }
 // };
 
-// import { pool } from '../../db.js';
-// /**
-//  * Controlador para crear un nuevo pedido (Order).
-//  * Este proceso es transaccional: debe insertar dos direcciones y el pedido.
-//  * Requiere: req.userId (del token), y body: { pickup, delivery, details, price }.
-//  */
+
+
+
+//  Controlador para crear un nuevo pedido (Order).
+ 
 // export const createOrder = async (req, res) => {
-//     // 1. Extraer ID del cliente del token (inyectado por verifyToken)
 //     const clienteId = req.userId; 
-//     const { pickup, delivery, details, price, price_usd } = req.body;
+//     const { pickup, pickupMunicipality, delivery, deliveryMunicipality, price, price_usd, typevehicle, typeservice, receptpay } = req.body;
 
-//     if (!clienteId || !pickup || !delivery || !details || price === undefined) {
-//         return res.status(400).json({ error: 'Faltan campos obligatorios para crear el pedido.' });
-//     }
+// // Validación de campos obligatorios
+// if (!clienteId || !pickup || !pickupMunicipality || !delivery || !deliveryMunicipality || 
+//     !typevehicle || !typeservice || !receptpay || price === undefined) {
+//     return res.status(400).json({ error: 'Faltan campos obligatorios para crear el pedido.' });
+// }
 
-//     // Usamos una transacción para garantizar la integridad de los datos
 //     const client = await pool.connect();
 
 //     try {
-//         await client.query('BEGIN'); // Iniciar la transacción
+//         await client.query('BEGIN');
 
-//         // 2. Insertar Dirección de Recogida (Origen) en la tabla 'direcciones'
-//         const pickupQuery = `
-//             INSERT INTO direcciones (usuario_id,calle, ciudad) 
-//             VALUES ($1, $2, $3) 
-//             RETURNING id;
-//         `;
-//         // Usamos valores por defecto para ciudad/país
-//         const pickupResult = await client.query(pickupQuery, [clienteId,pickup, 'Desconocida']); 
-//         const direccionRecogidaId = pickupResult.rows[0].id;
+//         // Procesar direcciones
+//         const direccionRecogidaId = await getOrCreateAddressId(pickup, pickupMunicipality, client, clienteId);
+//         const direccionEntregaId = await getOrCreateAddressId(delivery, deliveryMunicipality, client, clienteId);
 
-//         // 3. Insertar Dirección de Entrega (Destino) en la tabla 'direcciones'
-//                     // INSERT INTO direcciones (calle, ciudad, pais) 
-//         const deliveryQuery = `
-
-//             INSERT INTO direcciones (usuario_id,calle, ciudad) 
-//             VALUES ($1, $2, $3) 
-//             RETURNING id;
-//         `;
-//         const deliveryResult = await client.query(deliveryQuery, [clienteId,delivery, 'Desconocida']); 
-//         const direccionEntregaId = deliveryResult.rows[0].id;
-
-//         // 4. Insertar el Nuevo Pedido en la tabla 'pedidos'
-//         // direccion_recogida_id, 
-//         // detalles, 
 //         const orderQuery = `
-//             INSERT INTO pedidos (
-//                 cliente_id, 
-//                 direccion_entrega_id, 
-//                 total, 
-//                 estado, 
-//                 fecha_pedido,
-//                 total_dolar,
-//                 direccion_origen_id
-//             ) 
-//              VALUES ($1, $2, $3, 'pendiente', NOW(),$4,$5)
-//             RETURNING id;
-//         `;
-//         const orderResult = await client.query(orderQuery, [
-//             clienteId, 
-//             direccionEntregaId, 
-//             price,
-//             price_usd, 
-//             direccionRecogidaId
-//         ]);
+//         INSERT INTO pedidos (
+//             cliente_id,           -- $1
+//             direccion_origen_id,  -- $2
+//             direccion_destino_id, -- $3
+//             municipio_origen,     -- $4 (Nuevo)
+//             municipio_destino,    -- $5 (Nuevo)
+//             total,                -- $6
+//             total_dolar,          -- $7
+//             tipo_vehiculo_id,     -- $8
+//             tipo_servicio_id,     -- $9
+//             nro_recibo,           -- $10
+//             fecha_pedido,         -- $11
+//             estado                -- Valor fijo: 'pendiente'
+//         ) 
+//         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pendiente') 
+//         RETURNING id, fecha_pedido;
+//     `;
+    
+//     const orderResult = await client.query(orderQuery, [
+//         clienteId,            // $1
+//         direccionRecogidaId,  // $2
+//         direccionEntregaId,   // $3
+//         pickupMunicipality,   // $4
+//         deliveryMunicipality,  // $5
+//         price,                // $6 (Bs)
+//         price_usd,            // $7 (USD)
+//         typevehicle,          // $8
+//         typeservice,          // $9
+//         receptpay,            // $10
+//         new Date()            // $11
+//     ]);
 
-//         await client.query('COMMIT'); // Confirmar la transacción
+//         await client.query('COMMIT');
 
-//         res.status(201).json({ 
-//             message: 'Pedido creado exitosamente y en espera de repartidor.',
-//             orderId: orderResult.rows[0].id 
-//         });
+//         // res.status(201).json({ 
+//         //     message: 'Pedido creado exitosamente.',
+//         //     orderId: orderResult.rows[0].id 
+//         // });
+
+//         // Devolvemos la fecha creada para que el front no tenga que adivinar
+//     res.status(201).json({ 
+//         message: 'Pedido creado exitosamente.',
+//         orderId: orderResult.rows[0].id,
+//         fecha: orderResult.rows[0].fecha_pedido 
+//     });
 
 //     } catch (error) {
-//         await client.query('ROLLBACK'); // Revertir si algo falla
-//         console.error("Error en la transacción al crear el pedido:", error);
-//         res.status(500).json({ error: 'Error interno del servidor al procesar el pedido.' });
+//         await client.query('ROLLBACK');
+//         console.error("Error REAL en la base de datos:", error.message); // Mira esto en tu terminal
+//         res.status(500).json({ error: 'Error interno del servidor.', detalle: error.message });
 //     } finally {
 //         client.release();
 //     }
 // };
+
