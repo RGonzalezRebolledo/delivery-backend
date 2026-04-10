@@ -75,16 +75,19 @@ export const verifyMercantilPayment = async (paymentData) => {
             message: response.data.error_list?.[0]?.description || "Pago no encontrado o pendiente." 
         };
 
-    } catch (error) {
-        // 💡 RETORNO SI HAY ERROR (400, 500, Timeout, etc.)
-        let errorMsg = "Error de comunicación con el banco.";
-        
+    }  catch (error) {
         if (error.response) {
-            console.error("❌ Error API Mercantil:", error.response.data);
-            errorMsg = error.response.data.error_list?.[0]?.description || errorMsg;
+            // Esto te dirá exactamente qué campo está mal (ej: "Monto no coincide" o "Referencia inválida")
+            console.error("❌ ERROR DEL BANCO:", JSON.stringify(error.response.data, null, 2));
+            console.error("STATUS CODE:", error.response.status);
+        } else {
+            console.error("❌ ERROR DE RED:", error.message);
         }
-
-        return { success: false, message: errorMsg };
+        
+        return { 
+            success: false, 
+            message: error.response?.data?.error_list?.[0]?.description || "No se pudo localizar el pago." 
+        };
     }
 };
 
