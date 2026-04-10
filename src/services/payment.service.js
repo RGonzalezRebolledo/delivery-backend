@@ -47,7 +47,7 @@ export const verifyMercantilPayment = async (paymentData) => {
         },
         search_by: {
             // amount: parseFloat(formattedAmount), 
-            amount: 87420,
+            amount: 153226,
             currency: "ves",
             origin_mobile_number: encryptAES(phone, key), 
             destination_mobile_number: encryptAES("584142591177", key), 
