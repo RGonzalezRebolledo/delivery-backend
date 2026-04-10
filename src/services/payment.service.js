@@ -14,7 +14,7 @@ function encryptAES(text, secretKey) {
 
 export const verifyMercantilPayment = async (paymentData) => {
     const key = process.env.MERCANTIL_CIFRADO;
-    const merchantIdClient = process.env.MERCANTIL_CLIENT_ID;
+    const merchantIdClient = process.env.MERCANTIL_MERCHANT_ID;
     const { phone, reference, amount, date } = paymentData;
 
     if (!key || !merchantIdClient || !process.env.MERCANTIL_URL) {
