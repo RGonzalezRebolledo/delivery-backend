@@ -3,6 +3,8 @@ const axios = require('axios');
 const crypto = require('crypto');
 require('dotenv').config();
 
+const merchantId = process.env.MERCANTIL_MERCHANT_ID
+
 // 🔐 Función de cifrado según reglas de Mercantil (AES-128-ECB)
 function encryptAES(text, secretKey) {
     const hash = crypto.createHash('sha256').update(secretKey).digest();
@@ -26,12 +28,12 @@ async function testCertificacion() {
 
     const payload = {
         merchant_identify: {
-            integratorId: "1",
-            merchantId: "200284", 
-            terminalId: "1"
+            integratorId: "31",
+            merchantId: merchantId, 
+            terminalId: "abcde"
         },
         client_identify: {
-            ipaddress: "198.235.127.22",
+            ipaddress: "127.0.0.1",
             browser_agent: "Chrome 18.1.3",
             mobile: {
                 manufacturer: "Samsung",
@@ -41,12 +43,12 @@ async function testCertificacion() {
             }
         },
         search_by: {
-            amount: 525292, 
+            amount: 153226, 
             currency: "ves",
-            origin_mobile_number: encryptAES("584142591177", key), 
-            destination_mobile_number: encryptAES("584241513063", key), 
-            payment_reference: '048310026543',
-            trx_date: "2026-04-07"
+            origin_mobile_number: encryptAES("584241513063", key), 
+            destination_mobile_number: encryptAES("584142591177", key), 
+            payment_reference: "84840006899",
+            trx_date: "2026-04-10"
         }
     };
 
