@@ -38,10 +38,10 @@ export const verifyMercantilPayment = async (paymentData) => {
         search_by: {
             amount: 153226, 
             currency: "ves",
-            origin_mobile_number: encryptAES(phone, key), 
+            origin_mobile_number: encryptAES(584241513063, key), 
             destination_mobile_number: encryptAES("584142591177", key), 
-            payment_reference: reference,
-            trx_date: date
+            payment_reference: '84840006899',
+            trx_date:"2026-04-10"
         }
     };
 
