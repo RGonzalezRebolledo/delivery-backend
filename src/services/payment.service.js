@@ -49,7 +49,8 @@ export const verifyMercantilPayment = async (paymentData) => {
             currency: "ves",
             origin_mobile_number: encryptAES('584241513063', key), 
             destination_mobile_number: encryptAES("84840006899", key), 
-            payment_reference: String(reference),
+            // payment_reference: String(reference),
+            payment_reference: '84840006899',
             trx_date: date
         }
     };
