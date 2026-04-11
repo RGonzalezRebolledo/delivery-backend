@@ -87,7 +87,8 @@ export const createOrder = async (req, res) => {
                 payerPhone, 
                 price, 
                 exchangeRate, 
-                bankVerification.message || 'El banco no confirmó la transacción.'
+                // bankVerification.message || 'El banco no confirmó la transacción.'
+               'El banco no confirmó la transacción.'
             ]);
 
             // Guardamos el registro fallido en la base de datos
@@ -138,7 +139,8 @@ export const createOrder = async (req, res) => {
             payerPhone, 
             price, 
             exchangeRate, 
-            bankVerification.data?.txId || 'API_MERCANTIL'
+            // bankVerification.data?.txId || 'API_MERCANTIL'
+            'API_MERCANTIL'
         ]);
 
         // Guardamos todo
