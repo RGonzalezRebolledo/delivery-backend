@@ -60,7 +60,7 @@ export const createOrder = async (req, res) => {
             date: new Date().toISOString().split('T')[0]
         };
 
-        const bankVerification = await verifyMercantilPayment(paymentData);
+        //const bankVerification = await verifyMercantilPayment(paymentData); // HAGO LA VERIFICACION EN EL BANCO
 
         // --- PASO 2: INICIAR DB TRANSACCIÓN ---
         await client.query('BEGIN');

@@ -50,8 +50,8 @@ export const verifyMercantilPayment = async (paymentData) => {
             origin_mobile_number: encryptAES('584241513063', key), 
             destination_mobile_number: encryptAES("584142591177", key), 
             // payment_reference: String(reference),
-            payment_reference: '006899',
-            trx_date: date
+            payment_reference: '84840006899',
+            trx_date: "2026-04-10"
         }
     };
 
@@ -89,12 +89,19 @@ export const verifyMercantilPayment = async (paymentData) => {
             message: data.error_list?.[0]?.description || "Pago no encontrado" 
         };
 
-    } catch (error) {
-        console.error("❌ Error en verificación:", error.response?.data || error.message);
-        return { 
-            success: false, 
-            message: error.response?.data?.error_list?.[0]?.description || "Error de conexión bancaria" 
-        };
+    }  catch (error) {
+        if (error.response && error.response.data) {
+            // Esto imprimirá en tu consola de Railway el error real: 
+            // "Monto no coincide", "Referencia no encontrada", etc.
+            const listaErrores = error.response.data.error_list;
+            console.error("❌ RESPUESTA DETALLADA DEL BANCO:", JSON.stringify(listaErrores, null, 2));
+            
+            return { 
+                success: false, 
+                message: listaErrores?.[0]?.description || "Pago no localizado" 
+            };
+        }
+        return { success: false, message: "Error de conexión" };
     }
 };
 

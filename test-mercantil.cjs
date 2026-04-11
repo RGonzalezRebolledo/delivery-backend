@@ -29,7 +29,7 @@ async function testCertificacion() {
     const payload = {
         merchant_identify: {
             integratorId: "31",
-            merchantId: merchantId, 
+            merchantId: 200284, 
             terminalId: "abcde"
         },
         client_identify: {
