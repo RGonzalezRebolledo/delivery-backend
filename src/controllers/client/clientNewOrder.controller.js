@@ -61,6 +61,7 @@ export const createOrder = async (req, res) => {
         };
 
         //const bankVerification = await verifyMercantilPayment(paymentData); // HAGO LA VERIFICACION EN EL BANCO
+        const bankVerification = true
 
         // --- PASO 2: INICIAR DB TRANSACCIÓN ---
         await client.query('BEGIN');
@@ -70,7 +71,8 @@ export const createOrder = async (req, res) => {
         const direccionEntregaId = await getOrCreateAddressId(delivery, deliveryMunicipality, client, clienteId);
 
         // --- PASO 3: SI EL PAGO FALLÓ ---
-        if (!bankVerification.success) {
+        // if (!bankVerification.success) {
+            if (bankVerification !== true) {
             // No creamos la orden, pero SÍ dejamos rastro en payments como 'fallido'
             const failedPaymentQuery = `
                 INSERT INTO payments (
@@ -97,7 +99,8 @@ export const createOrder = async (req, res) => {
             // Devolvemos el error al frontend para que el usuario sepa que no pasó
             return res.status(402).json({ 
                 error: 'Pago no verificado.', 
-                detalle: bankVerification.message 
+                // detalle: bankVerification.message 
+                detalle: 'probando'
             });
         }
 
