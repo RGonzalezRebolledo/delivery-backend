@@ -1,6 +1,6 @@
-
 -- ------------------------------------------------------------------
 -- SCRIPT COMPLETO CONSOLIDADO: GAZELLA EXPRESS (VENEZUELA UTC-4)
+-- ACTUALIZACIÓN: SISTEMA DE COLA ESTÁTICA (FIFO) PARA REPARTIDORES
 -- ------------------------------------------------------------------
 
 -- 1. LIMPIEZA DE ENTORNO
@@ -59,14 +59,24 @@ CREATE TABLE usuarios (
     password_hash VARCHAR(255) NOT NULL
 );
 
+-- REPARTIDORES: Incorporación de lógica de disponibilidad y cola FIFO
 CREATE TABLE repartidores (
     id SERIAL PRIMARY KEY,
     usuario_id INT REFERENCES usuarios(id) ON DELETE CASCADE UNIQUE, 
     tipo_vehiculo_id INT REFERENCES tipos_vehiculos(id),
     documento_identidad VARCHAR(50) NOT NULL,
     tipo_documento VARCHAR(20) NOT NULL CHECK (tipo_documento IN ('DNI', 'Pasaporte', 'Licencia', 'Otro')),
-    foto VARCHAR(255) 
+    foto VARCHAR(255),
+    
+    -- Nuevos campos para la gestión de entregas (Cola Estática)
+    is_available BOOLEAN DEFAULT FALSE,             -- Switch On/Off del repartidor
+    available_since TIMESTAMPTZ,                   -- Fecha/Hora de ingreso a la cola (Posición FIFO)
+    ultima_entrega_at TIMESTAMPTZ                  -- Histórico para reportes
 );
+
+-- Índice parcial: Solo indexa repartidores disponibles para búsquedas ultrarrápidas de la cola
+CREATE INDEX idx_repartidores_fifo_queue ON repartidores (available_since) 
+WHERE is_available = TRUE;
 
 -- ------------------------------------------------------------------
 -- 4. LOGÍSTICA (Direcciones y Productos)
@@ -103,33 +113,27 @@ CREATE TABLE pedidos (
     direccion_destino_id INT NOT NULL REFERENCES direcciones(id), 
     tipo_servicio_id INT REFERENCES tipos_servicios(id),
     tipo_vehiculo_id INT REFERENCES tipos_vehiculos(id),
-    nro_recibo TEXT, -- Referencia manual o informativa
+    nro_recibo TEXT,
     fecha_pedido TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    estado VARCHAR(20) DEFAULT 'pendiente' CHECK (estado IN ('pendiente', 'en_camino', 'entregado', 'cancelado')),
-    total DECIMAL(10, 2) NOT NULL, -- Total en VES
+    estado VARCHAR(20) DEFAULT 'pendiente' CHECK (estado IN ('pendiente', 'asignado', 'en_camino', 'entregado', 'cancelado')),
+    total DECIMAL(10, 2) NOT NULL,
     total_dolar DECIMAL(10, 2) DEFAULT 0,
     municipio_origen VARCHAR(100),
     municipio_destino VARCHAR(100),
-    pago_confirmado BOOLEAN DEFAULT FALSE -- Flag rápido para despacho
+    pago_confirmado BOOLEAN DEFAULT FALSE
 );
 
 CREATE TABLE payments (
     id SERIAL PRIMARY KEY,
     pedido_id INT REFERENCES pedidos(id) ON DELETE CASCADE,
     cliente_id INT REFERENCES usuarios(id),
-    
-    -- Datos para validación Bancaria (Mercantil)
     metodo_pago VARCHAR(50) DEFAULT 'pago_movil_mercantil',
     referencia_bancaria VARCHAR(20) NOT NULL,
     telefono_pagador VARCHAR(20) NOT NULL,
-    
-    -- Valores económicos históricos
     monto_ves DECIMAL(12, 2) NOT NULL,
     tasa_aplicada DECIMAL(12, 4) NOT NULL,
-    
-    -- Respuesta del API
     estado_pago VARCHAR(20) DEFAULT 'pendiente' CHECK (estado_pago IN ('pendiente', 'completado', 'fallido')),
-    bank_tx_id VARCHAR(100), -- ID retornado por el banco
+    bank_tx_id VARCHAR(100),
     mensaje_respuesta_banco TEXT,
     fecha_pago TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
@@ -150,7 +154,8 @@ CREATE TABLE repartidores_pedidos (
     id SERIAL PRIMARY KEY,
     repartidor_id INT REFERENCES usuarios(id) ON DELETE CASCADE,
     pedido_id INT REFERENCES pedidos(id) ON DELETE CASCADE,
-    fecha_asignacion TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    fecha_asignacion TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    fecha_entrega TIMESTAMPTZ -- Para medir tiempos de respuesta
 );
 
 -- ------------------------------------------------------------------
@@ -187,27 +192,17 @@ INSERT INTO usuarios (nombre, email, telefono, tipo, password_hash)
 SELECT 'Administrador Global', 'ramongonzalez101@gmail.com', '999999', 'administrador', crypt('admin1234', gen_salt('bf'))
 WHERE NOT EXISTS (SELECT 1 FROM usuarios WHERE email = 'ramongonzalez101@gmail.com');
 
--- Índices sugeridos para velocidad en búsquedas frecuentes
+-- Índices adicionales para optimización
 CREATE INDEX idx_pedidos_cliente ON pedidos(cliente_id);
 CREATE INDEX idx_payments_ref ON payments(referencia_bancaria);
-
-
-
-
-
-
-
-
--- -- -- ------------------------------------------------------------------
--- -- -- SCRIPT COMPLETO ACTUALIZADO - ESQUEMA 'delivery'
--- -- -- ------------------------------------------------------------------
-
+CREATE INDEX idx_repartidores_disponibilidad ON repartidores(is_available);
 -- -- ------------------------------------------------------------------
--- -- SCRIPT COMPLETO CORREGIDO PARA VENEZUELA (UTC-4)
+-- -- SCRIPT COMPLETO CONSOLIDADO: GAZELLA EXPRESS (VENEZUELA UTC-4)
 -- -- ------------------------------------------------------------------
 
--- -- 1. LIMPIEZA
+-- -- 1. LIMPIEZA DE ENTORNO
 -- DROP VIEW IF EXISTS vista_pedidos_resumen;
+-- DROP TABLE IF EXISTS payments;
 -- DROP TABLE IF EXISTS repartidores_pedidos;
 -- DROP TABLE IF EXISTS pedido_detalles;
 -- DROP TABLE IF EXISTS pedidos;
@@ -219,10 +214,14 @@ CREATE INDEX idx_payments_ref ON payments(referencia_bancaria);
 -- DROP TABLE IF EXISTS exchange_rates;
 -- DROP TABLE IF EXISTS usuarios CASCADE; 
 
+-- -- Habilitar extensión para contraseñas seguras
+-- CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 -- -- ------------------------------------------------------------------
--- -- 2. TABLAS MAESTRAS
+-- -- 2. TABLAS MAESTRAS (Configuración y Tipos)
 -- -- ------------------------------------------------------------------
--- CREATE TABLE IF NOT EXISTS exchange_rates (
+
+-- CREATE TABLE exchange_rates (
 --     id SERIAL PRIMARY KEY,
 --     rate NUMERIC(10, 4) NOT NULL,
 --     currency VARCHAR(10) DEFAULT 'USD',
@@ -244,7 +243,7 @@ CREATE INDEX idx_payments_ref ON payments(referencia_bancaria);
 -- );
 
 -- -- ------------------------------------------------------------------
--- -- 3. CREACIÓN DE TABLAS BASE (CON TIMESTAMPTZ)
+-- -- 3. GESTIÓN DE USUARIOS Y PERFILES
 -- -- ------------------------------------------------------------------
 
 -- CREATE TABLE usuarios (
@@ -253,9 +252,22 @@ CREATE INDEX idx_payments_ref ON payments(referencia_bancaria);
 --     email VARCHAR(100) UNIQUE NOT NULL, 
 --     telefono VARCHAR(20),
 --     tipo VARCHAR(20) NOT NULL CHECK (tipo IN ('cliente', 'repartidor', 'administrador', 'supervisor')),
---     fecha_creacion TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP, -- Cambio a TZ
+--     fecha_creacion TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 --     password_hash VARCHAR(255) NOT NULL
 -- );
+
+-- CREATE TABLE repartidores (
+--     id SERIAL PRIMARY KEY,
+--     usuario_id INT REFERENCES usuarios(id) ON DELETE CASCADE UNIQUE, 
+--     tipo_vehiculo_id INT REFERENCES tipos_vehiculos(id),
+--     documento_identidad VARCHAR(50) NOT NULL,
+--     tipo_documento VARCHAR(20) NOT NULL CHECK (tipo_documento IN ('DNI', 'Pasaporte', 'Licencia', 'Otro')),
+--     foto VARCHAR(255) 
+-- );
+
+-- -- ------------------------------------------------------------------
+-- -- 4. LOGÍSTICA (Direcciones y Productos)
+-- -- ------------------------------------------------------------------
 
 -- CREATE TABLE productos (
 --     id SERIAL PRIMARY KEY,
@@ -277,30 +289,51 @@ CREATE INDEX idx_payments_ref ON payments(referencia_bancaria);
 --     municipio VARCHAR(100) NOT NULL 
 -- );
 
+-- -- ------------------------------------------------------------------
+-- -- 5. NÚCLEO DE NEGOCIO (Pedidos y Pagos)
+-- -- ------------------------------------------------------------------
+
 -- CREATE TABLE pedidos (
 --     id SERIAL PRIMARY KEY,
 --     cliente_id INT REFERENCES usuarios(id) ON DELETE CASCADE,
---     direccion_destino_id INT REFERENCES direcciones(id), 
 --     direccion_origen_id INT NOT NULL REFERENCES direcciones(id),
+--     direccion_destino_id INT NOT NULL REFERENCES direcciones(id), 
 --     tipo_servicio_id INT REFERENCES tipos_servicios(id),
 --     tipo_vehiculo_id INT REFERENCES tipos_vehiculos(id),
---     nro_recibo TEXT,
---     fecha_pedido TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP, -- Cambio a TZ
+--     nro_recibo TEXT, -- Referencia manual o informativa
+--     fecha_pedido TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 --     estado VARCHAR(20) DEFAULT 'pendiente' CHECK (estado IN ('pendiente', 'en_camino', 'entregado', 'cancelado')),
---     total DECIMAL(10, 2) NOT NULL,
+--     total DECIMAL(10, 2) NOT NULL, -- Total en VES
 --     total_dolar DECIMAL(10, 2) DEFAULT 0,
 --     municipio_origen VARCHAR(100),
---   municipio_destino VARCHAR(100)
+--     municipio_destino VARCHAR(100),
+--     pago_confirmado BOOLEAN DEFAULT FALSE -- Flag rápido para despacho
 -- );
 
--- CREATE TABLE repartidores (
+-- CREATE TABLE payments (
 --     id SERIAL PRIMARY KEY,
---     usuario_id INT REFERENCES usuarios(id) ON DELETE CASCADE UNIQUE, 
---     tipo_vehiculo_id INT REFERENCES tipos_vehiculos(id),
---     documento_identidad VARCHAR(50) NOT NULL,
---     tipo_documento VARCHAR(20) NOT NULL CHECK (tipo_documento IN ('DNI', 'Pasaporte', 'Licencia', 'Otro')),
---     foto VARCHAR(255) 
+--     pedido_id INT REFERENCES pedidos(id) ON DELETE CASCADE,
+--     cliente_id INT REFERENCES usuarios(id),
+    
+--     -- Datos para validación Bancaria (Mercantil)
+--     metodo_pago VARCHAR(50) DEFAULT 'pago_movil_mercantil',
+--     referencia_bancaria VARCHAR(20) NOT NULL,
+--     telefono_pagador VARCHAR(20) NOT NULL,
+    
+--     -- Valores económicos históricos
+--     monto_ves DECIMAL(12, 2) NOT NULL,
+--     tasa_aplicada DECIMAL(12, 4) NOT NULL,
+    
+--     -- Respuesta del API
+--     estado_pago VARCHAR(20) DEFAULT 'pendiente' CHECK (estado_pago IN ('pendiente', 'completado', 'fallido')),
+--     bank_tx_id VARCHAR(100), -- ID retornado por el banco
+--     mensaje_respuesta_banco TEXT,
+--     fecha_pago TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 -- );
+
+-- -- ------------------------------------------------------------------
+-- -- 6. DETALLES Y ASIGNACIONES
+-- -- ------------------------------------------------------------------
 
 -- CREATE TABLE pedido_detalles (
 --     id SERIAL PRIMARY KEY,
@@ -314,11 +347,11 @@ CREATE INDEX idx_payments_ref ON payments(referencia_bancaria);
 --     id SERIAL PRIMARY KEY,
 --     repartidor_id INT REFERENCES usuarios(id) ON DELETE CASCADE,
 --     pedido_id INT REFERENCES pedidos(id) ON DELETE CASCADE,
---     fecha_asignacion TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP -- Cambio a TZ
+--     fecha_asignacion TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 -- );
 
 -- -- ------------------------------------------------------------------
--- -- 4. VISTA (AUTOMÁTICAMENTE HEREDA TIMESTAMPTZ)
+-- -- 7. VISTA DE MONITOREO (Resumen Operativo)
 -- -- ------------------------------------------------------------------
 
 -- CREATE VIEW vista_pedidos_resumen AS
@@ -326,25 +359,32 @@ CREATE INDEX idx_payments_ref ON payments(referencia_bancaria);
 --     p.id AS pedido_id,
 --     u.nombre AS cliente,
 --     p.fecha_pedido,
---     p.estado,
---     p.total,
+--     p.estado AS estado_pedido,
+--     COALESCE(pay.estado_pago, 'no_registrado') AS estado_pago,
+--     p.total AS total_ves,
+--     p.total_dolar,
 --     ts.descript AS servicio,
 --     COALESCE(tv.descript, 'Sin asignar') AS vehiculo_repartidor,
---     d.calle || ', ' || d.ciudad AS direccion_entrega
+--     d.calle || ', ' || d.ciudad AS direccion_entrega,
+--     pay.referencia_bancaria AS ref_pago
 -- FROM pedidos p
 -- JOIN usuarios u ON p.cliente_id = u.id
 -- JOIN direcciones d ON p.direccion_destino_id = d.id
 -- LEFT JOIN tipos_servicios ts ON p.tipo_servicio_id = ts.id
+-- LEFT JOIN payments pay ON p.id = pay.pedido_id
 -- LEFT JOIN repartidores_pedidos rp ON p.id = rp.pedido_id
 -- LEFT JOIN repartidores r ON rp.repartidor_id = r.usuario_id
 -- LEFT JOIN tipos_vehiculos tv ON r.tipo_vehiculo_id = tv.id;
 
 -- -- ------------------------------------------------------------------
--- -- 5. CONFIGURACIÓN FINAL Y ADMIN
+-- -- 8. DATOS INICIALES Y ADMINISTRADOR
 -- -- ------------------------------------------------------------------
-
--- CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- INSERT INTO usuarios (nombre, email, telefono, tipo, password_hash)
 -- SELECT 'Administrador Global', 'ramongonzalez101@gmail.com', '999999', 'administrador', crypt('admin1234', gen_salt('bf'))
 -- WHERE NOT EXISTS (SELECT 1 FROM usuarios WHERE email = 'ramongonzalez101@gmail.com');
+
+-- -- Índices sugeridos para velocidad en búsquedas frecuentes
+-- CREATE INDEX idx_pedidos_cliente ON pedidos(cliente_id);
+-- CREATE INDEX idx_payments_ref ON payments(referencia_bancaria);
+
