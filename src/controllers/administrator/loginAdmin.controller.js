@@ -56,11 +56,19 @@ export const validateUserAdmin = async (req, res) => {
         );
 
         // 6. Establecer Cookie
+        // res.cookie('accessToken', token, {
+        //     httpOnly: true,
+        //     secure: process.env.NODE_ENV === 'production',
+        //     sameSite: 'Lax',
+        //     maxAge: 24 * 60 * 60 * 1000
+        // });
+
         res.cookie('accessToken', token, {
             httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'Lax',
-            maxAge: 24 * 60 * 60 * 1000
+            secure: true,       // Obligatorio para sameSite 'none'
+            sameSite: 'none',   // Permite que la cookie viaje entre Localhost y Railway
+            maxAge: 24 * 60 * 60 * 1000,
+            path: '/'
         });
 
         // 7. Respuesta exitosa
