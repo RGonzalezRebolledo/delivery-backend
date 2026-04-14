@@ -20,6 +20,7 @@ function encryptAES(text, secretKey) {
 
 async function testCertificacion() {
     const key = process.env.MERCANTIL_CIFRADO;
+    console.log (key)
     
     // Validar que las variables de entorno existan
     if (!key || !process.env.MERCANTIL_CLIENT_ID || !process.env.MERCANTIL_URL) {
@@ -30,10 +31,10 @@ async function testCertificacion() {
         merchant_identify: {
             integratorId: "31",
             merchantId: 200284, 
-            terminalId: "abcde"
+            terminalId: "31"
         },
         client_identify: {
-            ipaddress: "127.0.0.1",
+            ipaddress: "190.120.10.1",
             browser_agent: "Chrome 18.1.3",
             mobile: {
                 manufacturer: "Samsung",
@@ -43,11 +44,11 @@ async function testCertificacion() {
             }
         },
         search_by: {
-            amount: 153226, 
+            amount: 90475, 
             currency: "ves",
             origin_mobile_number: encryptAES("584241513063", key), 
             destination_mobile_number: encryptAES("584142591177", key), 
-            payment_reference: "84840006899",
+            payment_reference: "6898",
             trx_date: "2026-04-10"
         }
     };

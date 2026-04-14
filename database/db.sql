@@ -67,6 +67,9 @@ CREATE TABLE repartidores (
     documento_identidad VARCHAR(50) NOT NULL,
     tipo_documento VARCHAR(20) NOT NULL CHECK (tipo_documento IN ('DNI', 'Pasaporte', 'Licencia', 'Otro')),
     foto VARCHAR(255),
+    foto_vehiculo VARCHAR(255),  -- Nueva: Foto de la moto/carro
+    -- Control Administrativo
+    verificado BOOLEAN DEFAULT FALSE, -- Inactivo por defecto hasta que el Admin lo apruebe
     
     -- Nuevos campos para la gestión de entregas (Cola Estática)
     is_available BOOLEAN DEFAULT FALSE,             -- Switch On/Off del repartidor

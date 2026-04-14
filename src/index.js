@@ -20,6 +20,7 @@ import routerClientAddresses from './routes/client/clientaddresses.route.js';
 import routerLoginAdmin from './routes/administrator/loginAdmin.route.js';
 import routerVehicles from './routes/administrator/typeVhicle.route.js';
 import routerServices from './routes/administrator/typeServices.route.js';
+import routerDriverGetDrivers from './routes/driver/driver.route.js';
 
 const app = express();
 
@@ -112,6 +113,7 @@ app.use(routerClientAddresses);
 app.use(routerLoginAdmin);
 app.use(routerVehicles);
 app.use(routerServices);
+app.use(routerDriverGetDrivers)
 
 // --- MANEJO DE ERRORES GLOBAL ---
 app.use((err, req, res, next) => {
