@@ -2,26 +2,29 @@ import { pool } from '../../db.js';
 
 export const getDrivers = async (req, res) => {
     try {
+        // Consultamos solo lo básico para asegurar que funcione
         const query = `
             SELECT 
                 u.id AS usuario_id, 
                 u.nombre, 
-                u.email, 
-                u.telefono,
-                u.tipo,
-                u.created_at
+                u.email,
+                u.tipo
             FROM usuarios u
-            -- Usamos LEFT JOIN para ver si ya tiene un perfil de repartidor creado
             LEFT JOIN repartidores r ON u.id = r.usuario_id
             WHERE u.tipo = 'repartidor' 
             AND (r.id IS NULL OR r.verificado = FALSE)
-            ORDER BY u.created_at DESC;
         `;
         
         const result = await pool.query(query);
+        console.log("Candidatos encontrados:", result.rows.length);
         res.json(result.rows);
+
     } catch (err) {
-        console.error("Error al obtener aspirantes:", err.message);
-        res.status(500).json({ error: "Error interno al obtener los datos de pre-registro." });
+        // ESTO ES VITAL: Revisa los logs de Railway para leer este mensaje
+        console.error("🔥 ERROR SQL EN GETDRIVERS:", err.message);
+        res.status(500).json({ 
+            error: "Error interno en el servidor", 
+            details: err.message 
+        });
     }
 }
