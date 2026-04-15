@@ -9,12 +9,13 @@ export const getDrivers = async (req, res) => {
             u.nombre, 
             u.email,
             u.telefono,
-            r.id AS repartidor_id, -- Si es NULL, no tiene registro
-            r.is_active
+            u.fecha_creacion,
+            r.id AS repartidor_id,
+            r.is_active -- Este es el campo de tu tabla
         FROM usuarios u
         LEFT JOIN repartidores r ON u.id = r.usuario_id
         WHERE u.tipo = 'repartidor'
-        ORDER BY r.is_active ASC, u.created_at DESC
+        ORDER BY r.is_active ASC, u.fecha_creacion DESC
     `;
         
         const result = await pool.query(query);
