@@ -20,7 +20,6 @@ function encryptAES(text, secretKey) {
 
 async function testCertificacion() {
     const key = process.env.MERCANTIL_CIFRADO;
-    console.log (key)
     
     // Validar que las variables de entorno existan
     if (!key || !process.env.MERCANTIL_CLIENT_ID || !process.env.MERCANTIL_URL) {
