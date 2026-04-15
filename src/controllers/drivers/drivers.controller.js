@@ -3,15 +3,25 @@ import { pool } from '../../db.js';
 export const getDrivers = async (req, res) => {
     try {
         const query = `
-            SELECT r.*, u.nombre, u.email, tv.descript as vehiculo_descript
-            FROM repartidores r
-            JOIN usuarios u ON r.usuario_id = u.id
-            JOIN tipos_vehiculos tv ON r.tipo_vehiculo_id = tv.id
-            WHERE r.verificado = FALSE
+            SELECT 
+                u.id AS usuario_id, 
+                u.nombre, 
+                u.email, 
+                u.telefono,
+                u.tipo,
+                u.created_at
+            FROM usuarios u
+            -- Usamos LEFT JOIN para ver si ya tiene un perfil de repartidor creado
+            LEFT JOIN repartidores r ON u.id = r.usuario_id
+            WHERE u.tipo = 'repartidor' 
+            AND (r.id IS NULL OR r.verificado = FALSE)
+            ORDER BY u.created_at DESC;
         `;
+        
         const result = await pool.query(query);
         res.json(result.rows);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error("Error al obtener aspirantes:", err.message);
+        res.status(500).json({ error: "Error interno al obtener los datos de pre-registro." });
     }
 }
