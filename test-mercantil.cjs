@@ -43,11 +43,11 @@ async function testCertificacion() {
             }
         },
         search_by: {
-            amount: 90475, 
+            amount: 48060, 
             currency: "ves",
             origin_mobile_number: encryptAES("584241513063", key), 
             destination_mobile_number: encryptAES("584142591177", key), 
-            payment_reference: "6898",
+            payment_reference: "6896",
             trx_date: "2026-04-10"
         }
     };

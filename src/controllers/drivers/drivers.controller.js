@@ -8,6 +8,7 @@ export const getDrivers = async (req, res) => {
                 u.id AS usuario_id, 
                 u.nombre, 
                 u.email,
+                u.telefono,
                 u.tipo
             FROM usuarios u
             LEFT JOIN repartidores r ON u.id = r.usuario_id
