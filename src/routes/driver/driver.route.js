@@ -1,9 +1,9 @@
 import { Router } from "express";
 import { verifyToken } from '../middlewares/verifyToken.js'; // 👈 Importar el middleware
-import { getDrivers } from "../../controllers/drivers/drivers.controller.js";
+import { registerDriverInterview } from "../../controllers/drivers/driverRegisterModal.controller.js";
 
 const routerDriverGetDrivers = Router();
 
-routerDriverGetDrivers.get('/driver/getdrivers',verifyToken, getDrivers);
+routerDriverGetDrivers.get('/driver/getdrivers',verifyToken, registerDriverInterview);
 
 export default routerDriverGetDrivers;
