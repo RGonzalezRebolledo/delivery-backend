@@ -65,11 +65,11 @@ CREATE TABLE repartidores (
     usuario_id INT REFERENCES usuarios(id) ON DELETE CASCADE UNIQUE, 
     tipo_vehiculo_id INT REFERENCES tipos_vehiculos(id),
     documento_identidad VARCHAR(50) NOT NULL,
-    tipo_documento VARCHAR(20) NOT NULL CHECK (tipo_documento IN ('DNI', 'Pasaporte', 'Licencia', 'Otro')),
+    tipo_documento VARCHAR(20) NOT NULL CHECK (tipo_documento IN ('CI', 'Pasaporte', 'Licencia', 'Otro')),
     foto VARCHAR(255),
     foto_vehiculo VARCHAR(255),  -- Nueva: Foto de la moto/carro
     -- Control Administrativo para inactivar o activar el conductor en la plataforma
-    is_active VARCHAR(20) DEFAULT 'activo' CHECK (estado IN ('suspendido')),
+    is_active VARCHAR(20) DEFAULT 'activo' CHECK (is_active IN ('suspendido')),
     
     -- Nuevos campos para la gestión de entregas (Cola Estática)
     is_available BOOLEAN DEFAULT FALSE,             -- Switch On/Off del repartidor
