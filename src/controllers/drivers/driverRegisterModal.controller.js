@@ -1,3 +1,4 @@
+
 import { pool } from '../../db.js';
 
 export const registerDriverInterview = async (req, res) => {
@@ -10,7 +11,7 @@ export const registerDriverInterview = async (req, res) => {
         foto_vehiculo 
     } = req.body;
 
-    // Validación de campos obligatorios
+    // 1. Validación de campos obligatorios
     if (!usuario_id || !documento_identidad || !tipo_vehiculo_id || !foto || !foto_vehiculo) {
         return res.status(400).json({ 
             success: false,
@@ -23,8 +24,8 @@ export const registerDriverInterview = async (req, res) => {
     try {
         await client.query('BEGIN');
 
-        // 1. Insertar o actualizar en la tabla 'repartidores'
-        // Cambiamos el valor de 'true' por el string 'activo'
+        // 2. Insertar o actualizar en la tabla 'repartidores'
+        // Ajustado a tus nombres reales: is_active y is_available
         const driverQuery = `
             INSERT INTO repartidores (
                 usuario_id, 
@@ -34,7 +35,7 @@ export const registerDriverInterview = async (req, res) => {
                 foto, 
                 foto_vehiculo, 
                 is_active, 
-                disponible
+                is_available
             ) 
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             ON CONFLICT (usuario_id) 
@@ -55,13 +56,13 @@ export const registerDriverInterview = async (req, res) => {
             tipo_vehiculo_id, 
             foto, 
             foto_vehiculo,
-            'activo', // <--- Cambiado de true a 'activo'
-            false     // disponible sigue siendo booleano (para el switch de conexión)
+            'activo', 
+            false // Se registra pero inicia como NO disponible (is_available)
         ];
 
         const driverResult = await client.query(driverQuery, driverValues);
 
-        // 2. Actualizar el rol del usuario en la tabla general de usuarios
+        // 3. Actualizar el rol del usuario en la tabla general de usuarios
         await client.query(
             'UPDATE usuarios SET role = $1 WHERE id = $2',
             ['repartidor', usuario_id]
@@ -86,3 +87,93 @@ export const registerDriverInterview = async (req, res) => {
         client.release();
     }
 };
+
+
+// import { pool } from '../../db.js';
+
+// export const registerDriverInterview = async (req, res) => {
+//     const { 
+//         usuario_id, 
+//         documento_identidad, 
+//         tipo_documento, 
+//         tipo_vehiculo_id, 
+//         foto, 
+//         foto_vehiculo 
+//     } = req.body;
+
+//     // Validación de campos obligatorios
+//     if (!usuario_id || !documento_identidad || !tipo_vehiculo_id || !foto || !foto_vehiculo) {
+//         return res.status(400).json({ 
+//             success: false,
+//             error: 'Faltan datos obligatorios. Asegúrese de que ambas fotos se hayan subido correctamente.' 
+//         });
+//     }
+
+//     const client = await pool.connect();
+
+//     try {
+//         await client.query('BEGIN');
+
+//         // 1. Insertar o actualizar en la tabla 'repartidores'
+//         // Cambiamos el valor de 'true' por el string 'activo'
+//         const driverQuery = `
+//             INSERT INTO repartidores (
+//                 usuario_id, 
+//                 documento_identidad, 
+//                 tipo_documento, 
+//                 tipo_vehiculo_id, 
+//                 foto, 
+//                 foto_vehiculo, 
+//                 is_active, 
+//                 disponible
+//             ) 
+//             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+//             ON CONFLICT (usuario_id) 
+//             DO UPDATE SET 
+//                 documento_identidad = EXCLUDED.documento_identidad,
+//                 tipo_documento = EXCLUDED.tipo_documento,
+//                 tipo_vehiculo_id = EXCLUDED.tipo_vehiculo_id,
+//                 foto = EXCLUDED.foto,
+//                 foto_vehiculo = EXCLUDED.foto_vehiculo,
+//                 is_active = 'activo'
+//             RETURNING *;
+//         `;
+
+//         const driverValues = [
+//             usuario_id, 
+//             documento_identidad, 
+//             tipo_documento, 
+//             tipo_vehiculo_id, 
+//             foto, 
+//             foto_vehiculo,
+//             'activo', // <--- Cambiado de true a 'activo'
+//             false     // disponible sigue siendo booleano (para el switch de conexión)
+//         ];
+
+//         const driverResult = await client.query(driverQuery, driverValues);
+
+//         // 2. Actualizar el rol del usuario en la tabla general de usuarios
+//         await client.query(
+//             'UPDATE usuarios SET role = $1 WHERE id = $2',
+//             ['repartidor', usuario_id]
+//         );
+
+//         await client.query('COMMIT');
+
+//         res.status(201).json({
+//             success: true,
+//             message: 'Conductor registrado y activado con éxito',
+//             data: driverResult.rows[0]
+//         });
+
+//     } catch (error) {
+//         await client.query('ROLLBACK');
+//         console.error('Error en registerDriverInterview:', error);
+//         res.status(500).json({ 
+//             success: false, 
+//             error: 'Error interno al procesar el registro del conductor.' 
+//         });
+//     } finally {
+//         client.release();
+//     }
+// };
