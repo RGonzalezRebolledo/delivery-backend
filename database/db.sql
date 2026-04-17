@@ -69,7 +69,7 @@ CREATE TABLE repartidores (
     foto VARCHAR(255),
     foto_vehiculo VARCHAR(255),  -- Nueva: Foto de la moto/carro
     -- Control Administrativo para inactivar o activar el conductor en la plataforma
-    is_active VARCHAR(20) DEFAULT 'activo' CHECK (is_active IN ('suspendido')),
+    is_active VARCHAR(20) DEFAULT 'activo' CHECK (is_active IN ('activo','suspendido')),
     
     -- Nuevos campos para la gestión de entregas (Cola Estática)
     is_available BOOLEAN DEFAULT FALSE,             -- Switch On/Off del repartidor

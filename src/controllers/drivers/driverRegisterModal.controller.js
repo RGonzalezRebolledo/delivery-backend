@@ -64,7 +64,7 @@ export const registerDriverInterview = async (req, res) => {
 
         // 3. Actualizar el rol del usuario en la tabla general de usuarios
         await client.query(
-            'UPDATE usuarios SET role = $1 WHERE id = $2',
+            'UPDATE usuarios SET tipo = $1 WHERE id = $2',
             ['repartidor', usuario_id]
         );
 
