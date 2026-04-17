@@ -4,6 +4,6 @@ import { registerDriverInterview } from "../../controllers/drivers/driverRegiste
 
 const routerDriverRegisterModal = Router();
 
-routerDriverGetDrivers.get('/driver/driver-register-modal',verifyToken, registerDriverInterview );
+routerDriverRegisterModal.post('/driver/driver-register-modal',verifyToken, registerDriverInterview );
 
 export default routerDriverRegisterModal;
