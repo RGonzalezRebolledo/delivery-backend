@@ -10,23 +10,20 @@ export const getDrivers = async (req, res) => {
             u.telefono,
             u.fecha_creacion,
             r.id AS repartidor_id,
-            r.is_active,
+            COALESCE(r.is_active, 'pendiente') AS is_active, -- Si es null, lo tratamos como 'pendiente'
             r.documento_identidad,
             r.tipo_documento,
             r.foto,
             r.foto_vehiculo,
             r.tipo_vehiculo_id,
-            tv.descript AS tipo_vehiculo -- Traemos el nombre desde tipos_vehiculos
+            tv.descript AS tipo_vehiculo
         FROM usuarios u
         LEFT JOIN repartidores r ON u.id = r.usuario_id
-        LEFT JOIN tipos_vehiculos tv ON r.tipo_vehiculo_id = tv.id -- JOIN correcto en plural
+        LEFT JOIN tipos_vehiculos tv ON r.tipo_vehiculo_id = tv.id
         WHERE u.tipo = 'repartidor'
         ORDER BY 
-            CASE 
-                WHEN r.id IS NULL THEN 0 
-                ELSE 1 
-            END, 
-            u.fecha_creacion DESC
+            is_active ASC, -- Ordena: activo, pendiente, suspendido (alfabético)
+            u.nombre ASC   -- Dentro de cada estatus, ordena por nombre de la A a la Z
     `;
         
         const result = await pool.query(query);
@@ -35,7 +32,7 @@ export const getDrivers = async (req, res) => {
     } catch (err) {
         console.error("🔥 ERROR SQL EN GETDRIVERS:", err.message);
         res.status(500).json({ 
-            error: "Error al obtener conductores", 
+            error: "Error al obtener conductores ordenados", 
             details: err.message 
         });
     }
