@@ -73,8 +73,8 @@ CREATE TABLE repartidores (
     
     -- Nuevos campos para la gestión de entregas (Cola Estática)
     is_available BOOLEAN DEFAULT FALSE,             -- Switch On/Off del repartidor
-    available_since TIMESTAMPTZ,                   -- Fecha/Hora de ingreso a la cola (Posición FIFO)
-    ultima_entrega_at TIMESTAMPTZ                  -- Histórico para reportes
+    available_since TIMESTAMP WITHOUT TIME ZONE,                   -- Fecha/Hora de ingreso a la cola (Posición FIFO)
+    ultima_entrega_at TIMESTAMP WITHOUT TIME ZONE                 -- Histórico para reportes
 );
 
 -- Índice parcial: Solo indexa repartidores disponibles para búsquedas ultrarrápidas de la cola
