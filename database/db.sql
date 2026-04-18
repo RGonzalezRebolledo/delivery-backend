@@ -28,7 +28,7 @@ CREATE TABLE exchange_rates (
     id SERIAL PRIMARY KEY,
     rate NUMERIC(10, 4) NOT NULL,
     currency VARCHAR(10) DEFAULT 'USD',
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE tipos_vehiculos (
