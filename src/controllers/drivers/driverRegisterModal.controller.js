@@ -1,4 +1,3 @@
-
 import { pool } from '../../db.js';
 
 export const registerDriverInterview = async (req, res) => {
@@ -25,7 +24,7 @@ export const registerDriverInterview = async (req, res) => {
         await client.query('BEGIN');
 
         // 2. Insertar o actualizar en la tabla 'repartidores'
-        // Ajustado a tus nombres reales: is_active y is_available
+        // Se añade available_since para la cola FIFO
         const driverQuery = `
             INSERT INTO repartidores (
                 usuario_id, 
@@ -35,9 +34,10 @@ export const registerDriverInterview = async (req, res) => {
                 foto, 
                 foto_vehiculo, 
                 is_active, 
-                is_available
+                is_available,
+                available_since
             ) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP)
             ON CONFLICT (usuario_id) 
             DO UPDATE SET 
                 documento_identidad = EXCLUDED.documento_identidad,
@@ -45,7 +45,8 @@ export const registerDriverInterview = async (req, res) => {
                 tipo_vehiculo_id = EXCLUDED.tipo_vehiculo_id,
                 foto = EXCLUDED.foto,
                 foto_vehiculo = EXCLUDED.foto_vehiculo,
-                is_active = 'activo'
+                is_active = 'activo',
+                available_since = CURRENT_TIMESTAMP
             RETURNING *;
         `;
 
@@ -57,7 +58,7 @@ export const registerDriverInterview = async (req, res) => {
             foto, 
             foto_vehiculo,
             'activo', 
-            false // Se registra pero inicia como NO disponible (is_available)
+            false // Se registra pero inicia como NO disponible hasta que se ponga "En línea"
         ];
 
         const driverResult = await client.query(driverQuery, driverValues);
@@ -72,7 +73,7 @@ export const registerDriverInterview = async (req, res) => {
 
         res.status(201).json({
             success: true,
-            message: 'Conductor registrado y activado con éxito',
+            message: 'Conductor registrado y posicionado en cola con éxito',
             data: driverResult.rows[0]
         });
 
@@ -89,6 +90,7 @@ export const registerDriverInterview = async (req, res) => {
 };
 
 
+
 // import { pool } from '../../db.js';
 
 // export const registerDriverInterview = async (req, res) => {
@@ -101,7 +103,7 @@ export const registerDriverInterview = async (req, res) => {
 //         foto_vehiculo 
 //     } = req.body;
 
-//     // Validación de campos obligatorios
+//     // 1. Validación de campos obligatorios
 //     if (!usuario_id || !documento_identidad || !tipo_vehiculo_id || !foto || !foto_vehiculo) {
 //         return res.status(400).json({ 
 //             success: false,
@@ -114,8 +116,8 @@ export const registerDriverInterview = async (req, res) => {
 //     try {
 //         await client.query('BEGIN');
 
-//         // 1. Insertar o actualizar en la tabla 'repartidores'
-//         // Cambiamos el valor de 'true' por el string 'activo'
+//         // 2. Insertar o actualizar en la tabla 'repartidores'
+//         // Ajustado a tus nombres reales: is_active y is_available
 //         const driverQuery = `
 //             INSERT INTO repartidores (
 //                 usuario_id, 
@@ -125,7 +127,7 @@ export const registerDriverInterview = async (req, res) => {
 //                 foto, 
 //                 foto_vehiculo, 
 //                 is_active, 
-//                 disponible
+//                 is_available
 //             ) 
 //             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 //             ON CONFLICT (usuario_id) 
@@ -146,15 +148,15 @@ export const registerDriverInterview = async (req, res) => {
 //             tipo_vehiculo_id, 
 //             foto, 
 //             foto_vehiculo,
-//             'activo', // <--- Cambiado de true a 'activo'
-//             false     // disponible sigue siendo booleano (para el switch de conexión)
+//             'activo', 
+//             false // Se registra pero inicia como NO disponible (is_available)
 //         ];
 
 //         const driverResult = await client.query(driverQuery, driverValues);
 
-//         // 2. Actualizar el rol del usuario en la tabla general de usuarios
+//         // 3. Actualizar el rol del usuario en la tabla general de usuarios
 //         await client.query(
-//             'UPDATE usuarios SET role = $1 WHERE id = $2',
+//             'UPDATE usuarios SET tipo = $1 WHERE id = $2',
 //             ['repartidor', usuario_id]
 //         );
 
@@ -177,3 +179,5 @@ export const registerDriverInterview = async (req, res) => {
 //         client.release();
 //     }
 // };
+
+
