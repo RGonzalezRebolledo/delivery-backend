@@ -37,7 +37,7 @@ export const registerDriverInterview = async (req, res) => {
                 is_available,
                 available_since
             ) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, (CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'America/Caracas'))
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8,timezone('America/Caracas', CURRENT_TIMESTAMP))
             ON CONFLICT (usuario_id) 
             DO UPDATE SET 
                 documento_identidad = EXCLUDED.documento_identidad,
@@ -46,7 +46,7 @@ export const registerDriverInterview = async (req, res) => {
                 foto = EXCLUDED.foto,
                 foto_vehiculo = EXCLUDED.foto_vehiculo,
                 is_active = 'activo',
-                available_since = (CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'America/Caracas')
+                available_since = timezone('America/Caracas', CURRENT_TIMESTAMP)
             RETURNING *;
         `;
 

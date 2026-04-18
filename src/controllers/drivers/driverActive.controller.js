@@ -16,7 +16,7 @@ export const activateDriver = async (req, res) => {
             UPDATE repartidores 
             SET is_active = 'activo', 
                 is_available = true,
-                available_since = (CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'America/Caracas')
+                available_since = timezone('America/Caracas', CURRENT_TIMESTAMP)
             WHERE usuario_id = $1 
             RETURNING *;
         `;

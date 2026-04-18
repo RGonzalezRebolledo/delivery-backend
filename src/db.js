@@ -1,14 +1,11 @@
 import pg from 'pg';
 import 'dotenv/config';
 
-// Prioridad absoluta a DATABASE_URL
+// 1. Prioridad absoluta a DATABASE_URL
 const connectionString = "postgresql://postgres:zOediUhGgqpaaEypWgVWpxoDKAGadavw@yamanote.proxy.rlwy.net:47717/railway";
 
 console.log("--- DEBUG BASE DE DATOS ---");
-console.log("DATABASE_URL existe:", !!connectionString);
-if (connectionString) {
-    console.log("Inicia con:", connectionString.substring(0, 15), "...");
-}
+console.log("DATABASE_URL cargada correctamente");
 console.log("---------------------------");
 
 export const pool = new pg.Pool({
@@ -17,26 +14,23 @@ export const pool = new pg.Pool({
     ssl: {
         rejectUnauthorized: false
     },
-    // FUERZA LA ZONA HORARIA DESDE LA CONFIGURACIÓN DEL CLIENTE
-    // Esto asegura que cada sesión inicie en hora de Venezuela (UTC-4)
+    // Fuerza la zona horaria a Venezuela desde el inicio de la sesión
     options: "-c timezone=America/Caracas"
 });
 
-// Verificación y configuración adicional por seguridad
+// 2. Configuración adicional por seguridad en cada nueva conexión
 pool.on('connect', async (client) => {
     try {
-        // Doble verificación: asegura que la conexión actual use la zona horaria correcta
         await client.query("SET timezone = 'America/Caracas'");
         console.log(`✅ Conexión establecida: Hora de Venezuela (America/Caracas)`);
     } catch (err) {
-        console.error('❌ Error al sincronizar zona horaria en la conexión:', err);
+        console.error('❌ Error al sincronizar zona horaria:', err);
     }
 });
 
 pool.on('error', (err) => {
     console.error('❌ Error inesperado en el pool de conexión:', err);
 });
-
 
 
 // import pg from 'pg';
