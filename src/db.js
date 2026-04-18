@@ -46,6 +46,17 @@ export const pool = new pg.Pool({
     }
 });
 
+// CONFIGURACIÓN GLOBAL DE ZONA HORARIA
+pool.on('connect', async (client) => {
+    try {
+        // Establece la zona horaria de Venezuela para cada nueva conexión
+        await client.query("SET timezone = 'America/Caracas'");
+        console.log(`✅ Conectado a PostgreSQL (Zona Horaria: America/Caracas)`);
+    } catch (err) {
+        console.error('❌ Error al establecer timezone:', err);
+    }
+});
+
 pool.on('connect', () => {
     console.log(`✅ Conectado a la base de datos PostgreSQL en Railway`);
 });
