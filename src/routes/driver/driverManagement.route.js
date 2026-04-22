@@ -3,7 +3,7 @@ import {
     toggleAvailability, 
     getCurrentOrder, 
     completeOrder 
-} from '../../controllers/ManagementDriver:controller.js';
+} from '../../controllers/ManagementDriver.controller.js';
 import { verifyToken } from '../middlewares/auth.middleware.js'; // Tu middleware de JWT
 
 const routerDriverManagement = Router();
