@@ -1,4 +1,4 @@
-import { pool } from '../db.js';
+import { pool } from '../../db.js';
 
 // 1. ACTIVAR/DESACTIVAR DISPONIBILIDAD (Switch del Dashboard)
 export const toggleAvailability = async (req, res) => {
