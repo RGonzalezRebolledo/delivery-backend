@@ -57,6 +57,9 @@ const io = new Server(httpServer, {
         credentials: true
     },
     transports: ['polling', 'websocket'], // Prioriza polling para evitar errores de conexión inicial
+    pingTimeout: 60000, // Aumentamos el tiempo de espera
+    pingInterval: 25000,
+    connectTimeout: 45000,
     allowEIO3: true
 });
 
