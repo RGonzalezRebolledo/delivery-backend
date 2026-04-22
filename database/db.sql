@@ -123,7 +123,8 @@ CREATE TABLE pedidos (
     total_dolar DECIMAL(10, 2) DEFAULT 0,
     municipio_origen VARCHAR(100),
     municipio_destino VARCHAR(100),
-    pago_confirmado BOOLEAN DEFAULT FALSE
+    pago_confirmado BOOLEAN DEFAULT FALSE,
+    repartidor_id INT REFERENCES usuarios(id)
 );
 
 CREATE TABLE payments (

@@ -1,10 +1,12 @@
 import 'dotenv/config';
 import express from 'express';
+import { createServer } from 'http'; // Necesario para Socket.io
+import { Server } from 'socket.io';   // Librería de Sockets
 import morgan from 'morgan';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import cron from 'node-cron';
-import {pool} from './db.js';
+import { pool } from './db.js';
 import { runBcvScraper } from './services/scraperService.js';
 
 // --- IMPORTACIÓN DE RUTAS ---
@@ -24,10 +26,39 @@ import routerDriverGetDrivers from './routes/driver/driver.route.js';
 import routerDriverRegisterModal from './routes/driver/driverRegisterModal.route.js';
 
 const app = express();
+const httpServer = createServer(app); // Vinculamos express al servidor HTTP
+
+// --- CONFIGURACIÓN DE SOCKET.IO ---
+const io = new Server(httpServer, {
+    cors: {
+        origin: [
+            'http://localhost:5173',
+            'http://localhost:5174',
+            'https://deliveryaplication-ioll.vercel.app'
+        ],
+        methods: ["GET", "POST"],
+        credentials: true
+    }
+});
+
+// Guardamos la instancia de IO para usarla en los controladores
+app.set('socketio', io);
+
+io.on('connection', (socket) => {
+    console.log('📱 Nuevo dispositivo conectado:', socket.id);
+
+    // Canal privado para el repartidor (se une al loguearse)
+    socket.on('join_driver_room', (usuario_id) => {
+        socket.join(`user_${usuario_id}`);
+        console.log(`👷 Repartidor ${usuario_id} ahora escucha notificaciones privadas`);
+    });
+
+    socket.on('disconnect', () => {
+        console.log('❌ Dispositivo desconectado');
+    });
+});
 
 // --- LÓGICA DE TASA DE CAMBIO (BCV) ---
-
-// 1. Inicialización (Se ejecuta una vez al levantar el server)
 const initializeExchangeRate = async () => {
     try {
         const res = await pool.query('SELECT COUNT(*) FROM exchange_rates');
@@ -44,14 +75,11 @@ const initializeExchangeRate = async () => {
     }
 };
 
-// 2. Tarea con reintentos para el Cron
 const taskWithRetry = async (attempt = 1) => {
     const MAX_ATTEMPTS = 3;
     const RETRY_DELAY = 10 * 60 * 1000;
-
     console.log(`\n[${new Date().toLocaleString()}] Intentando actualización BCV (Intento ${attempt}/${MAX_ATTEMPTS})...`);
     const result = await runBcvScraper();
-
     if (result) {
         console.log(`✅ Proceso completado exitosamente.`);
     } else if (attempt < MAX_ATTEMPTS) {
@@ -62,7 +90,6 @@ const taskWithRetry = async (attempt = 1) => {
     }
 };
 
-// 3. Programación Cron (9:02 AM y 4:02 PM)
 cron.schedule('2 9,16 * * 1-5', () => {
     taskWithRetry();
 });
@@ -73,13 +100,6 @@ const allowedOrigins = [
     'http://localhost:5174',
     'https://deliveryaplication-ioll.vercel.app'
 ];
-
-if (process.env.FRONTEND_URL_DEV) {
-    process.env.FRONTEND_URL_DEV.split(',').forEach(o => allowedOrigins.push(o.trim()));
-}
-if (process.env.FRONTEND_URL_PROD) {
-    allowedOrigins.push(process.env.FRONTEND_URL_PROD.trim());
-}
 
 app.use(cors({
     origin: function (origin, callback) {
@@ -114,8 +134,8 @@ app.use(routerClientAddresses);
 app.use(routerLoginAdmin);
 app.use(routerVehicles);
 app.use(routerServices);
-app.use(routerDriverGetDrivers)
-app.use(routerDriverRegisterModal)
+app.use(routerDriverGetDrivers);
+app.use(routerDriverRegisterModal);
 
 // --- MANEJO DE ERRORES GLOBAL ---
 app.use((err, req, res, next) => {
@@ -129,26 +149,17 @@ app.use((err, req, res, next) => {
 // --- LEVANTAR SERVIDOR ---
 const PORT = process.env.PORT || 4000;
 
-app.listen(PORT, '0.0.0.0', async () => {
+// IMPORTANTE: Cambiamos app.listen por httpServer.listen
+httpServer.listen(PORT, '0.0.0.0', async () => {
     console.log("--------------------------");
-    console.log(`🚀 Servidor en puerto ${PORT}`);
+    console.log(`🚀 Gazzella Express Running on port ${PORT}`);
     
-    // USAR AWAIT AQUÍ ES VITAL
     await initializeExchangeRate(); 
     
     console.log("--------------------------");
 });
 
 
-// app.listen(PORT, '0.0.0.0', async () => {
-//     console.log("--------------------------");
-//     console.log(`🚀 Servidor en puerto ${PORT}`);
-    
-//     // Ejecutamos la inicialización de la tasa al arrancar
-//     await initializeExchangeRate();
-    
-//     console.log("--------------------------");
-// });
 
 // import 'dotenv/config';
 // import express from 'express';
@@ -156,10 +167,10 @@ app.listen(PORT, '0.0.0.0', async () => {
 // import cors from 'cors';
 // import cookieParser from 'cookie-parser';
 // import cron from 'node-cron';
+// import {pool} from './db.js';
 // import { runBcvScraper } from './services/scraperService.js';
-// import pool from './db.js';
 
-// // Importación de Rutas
+// // --- IMPORTACIÓN DE RUTAS ---
 // import routerUsers from './routes/users.route.js';
 // import routerLogin from './routes/login.route.js';
 // import routerAuth from './routes/auth.route.js';
@@ -172,20 +183,16 @@ app.listen(PORT, '0.0.0.0', async () => {
 // import routerLoginAdmin from './routes/administrator/loginAdmin.route.js';
 // import routerVehicles from './routes/administrator/typeVhicle.route.js';
 // import routerServices from './routes/administrator/typeServices.route.js';
+// import routerDriverGetDrivers from './routes/driver/driver.route.js';
+// import routerDriverRegisterModal from './routes/driver/driverRegisterModal.route.js';
 
-// /**
-//  * Función que intenta ejecutar el scraper.
-//  * Si falla, espera 10 minutos y vuelve a intentar (máximo 3 intentos).
-//  * en esta funcion activo el cambio del dolar del dia segun la hora
-//  */
-// import { runBcvScraper } from './services/scraperService.js';
-// import pool from './db.js';
+// const app = express();
 
-// // ... (tus otras importaciones)
+// // --- LÓGICA DE TASA DE CAMBIO (BCV) ---
 
+// // 1. Inicialización (Se ejecuta una vez al levantar el server)
 // const initializeExchangeRate = async () => {
 //     try {
-//         // Verificamos si ya existe al menos un registro
 //         const res = await pool.query('SELECT COUNT(*) FROM exchange_rates');
 //         const count = parseInt(res.rows[0].count);
 
@@ -200,60 +207,28 @@ app.listen(PORT, '0.0.0.0', async () => {
 //     }
 // };
 
-// // Llamamos a la función justo después de conectar la base de datos o al iniciar el server
-// initializeExchangeRate();
-
-// const fetchCurrentExchangeRateFromDB = async () => {
-//     try {
-//         const result = await pool.query(
-//             'SELECT rate FROM exchange_rates ORDER BY updated_at DESC LIMIT 1'
-//         );
-
-//         if (result.rows.length > 0) {
-//             return parseFloat(result.rows[0].rate);
-//         }
-        
-//         // --- FALLBACK DE EMERGENCIA ---
-//         // Si no hay nada en DB y el scraper inicial falló, devolvemos un valor 
-//         // aproximado para que el sistema no dé 0.
-//         console.warn("⚠️ DB vacía. Usando fallback de emergencia.");
-//         return 36.50; // Coloca aquí un valor base realista
-        
-//     } catch (error) {
-//         console.error("⚠️ Error en DB:", error.message);
-//         return 36.50; 
-//     }
-// };
-
+// // 2. Tarea con reintentos para el Cron
 // const taskWithRetry = async (attempt = 1) => {
 //     const MAX_ATTEMPTS = 3;
-//     const RETRY_DELAY = 10 * 60 * 1000; // 10 minutos en milisegundos
+//     const RETRY_DELAY = 10 * 60 * 1000;
 
-//     console.log(`\n[${new Date().toLocaleString()}] Intentando actualización (Intento ${attempt}/${MAX_ATTEMPTS})...`);
-    
+//     console.log(`\n[${new Date().toLocaleString()}] Intentando actualización BCV (Intento ${attempt}/${MAX_ATTEMPTS})...`);
 //     const result = await runBcvScraper();
 
 //     if (result) {
-//         console.log(`✅ Proceso completado exitosamente en el intento ${attempt}.`);
+//         console.log(`✅ Proceso completado exitosamente.`);
 //     } else if (attempt < MAX_ATTEMPTS) {
-//         console.log(`⚠️ Falló el intento ${attempt}. Reintentando en 10 minutos...`);
-        
-//         setTimeout(() => {
-//             taskWithRetry(attempt + 1);
-//         }, RETRY_DELAY);
+//         console.log(`⚠️ Falló intento ${attempt}. Reintentando en 10 min...`);
+//         setTimeout(() => taskWithRetry(attempt + 1), RETRY_DELAY);
 //     } else {
-//         console.error(`🚨 Se alcanzaron los ${MAX_ATTEMPTS} intentos. La actualización falló definitivamente.`);
-//         // Aquí podrías enviar un correo o notificación de error si lo deseas
+//         console.error(`🚨 Se alcanzaron los ${MAX_ATTEMPTS} intentos. Fallo definitivo.`);
 //     }
 // };
 
-// // Programación: Lunes a Viernes a las 9am y 4pm
+// // 3. Programación Cron (9:02 AM y 4:02 PM)
 // cron.schedule('2 9,16 * * 1-5', () => {
 //     taskWithRetry();
 // });
-
-
-// const app = express();
 
 // // --- CONFIGURACIÓN DE CORS ---
 // const allowedOrigins = [
@@ -262,7 +237,6 @@ app.listen(PORT, '0.0.0.0', async () => {
 //     'https://deliveryaplication-ioll.vercel.app'
 // ];
 
-// // Carga dinámica de orígenes desde variables de entorno
 // if (process.env.FRONTEND_URL_DEV) {
 //     process.env.FRONTEND_URL_DEV.split(',').forEach(o => allowedOrigins.push(o.trim()));
 // }
@@ -272,12 +246,9 @@ app.listen(PORT, '0.0.0.0', async () => {
 
 // app.use(cors({
 //     origin: function (origin, callback) {
-//         // !origin permite herramientas como Postman o Thunder Client
 //         if (!origin || allowedOrigins.includes(origin)) {
 //             callback(null, true);
 //         } else {
-//             // No bloqueamos con error de servidor para evitar el 502, 
-//             // simplemente denegamos el acceso CORS
 //             console.warn(`⚠️ Origen bloqueado por CORS: ${origin}`);
 //             callback(null, false); 
 //         }
@@ -294,7 +265,6 @@ app.listen(PORT, '0.0.0.0', async () => {
 // app.use(cookieParser());
 
 // // --- RUTAS ---
-// // Es buena práctica agruparlas o usar un prefijo como /api si lo deseas
 // app.use(routerCheckSesion);
 // app.use(routerUsers);
 // app.use(routerLogin);
@@ -307,9 +277,10 @@ app.listen(PORT, '0.0.0.0', async () => {
 // app.use(routerLoginAdmin);
 // app.use(routerVehicles);
 // app.use(routerServices);
+// app.use(routerDriverGetDrivers)
+// app.use(routerDriverRegisterModal)
 
 // // --- MANEJO DE ERRORES GLOBAL ---
-// // Esto evita que el servidor se caiga (502) ante un error no controlado
 // app.use((err, req, res, next) => {
 //     console.error('🔥 Error detectado:', err.stack);
 //     res.status(err.status || 500).json({
@@ -321,20 +292,14 @@ app.listen(PORT, '0.0.0.0', async () => {
 // // --- LEVANTAR SERVIDOR ---
 // const PORT = process.env.PORT || 4000;
 
-// // Escuchar en 0.0.0.0 es obligatorio para Railway
-// // app.listen(PORT, '0.0.0.0', () => {
-// //     console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
-// //     console.log('✅ Orígenes permitidos:', allowedOrigins);
-// // });
-
-// app.listen(PORT, '0.0.0.0', () => {
-//     console.log("--- CHECK DE VARIABLES ---");
-//     console.log("DATABASE_URL existe:", !!process.env.DATABASE_URL);
-//     if (process.env.DATABASE_URL) {
-//         console.log("Host detectado:", process.env.DATABASE_URL.split('@')[1]?.split(':')[0]);
-//     }
+// app.listen(PORT, '0.0.0.0', async () => {
 //     console.log("--------------------------");
-//     console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
+//     console.log(`🚀 Servidor en puerto ${PORT}`);
+    
+//     // USAR AWAIT AQUÍ ES VITAL
+//     await initializeExchangeRate(); 
+    
+//     console.log("--------------------------");
 // });
 
 
