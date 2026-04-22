@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
-import { createServer } from 'http'; // Necesario para Socket.io
-import { Server } from 'socket.io';   // Librería de Sockets
+import { createServer } from 'http'; 
+import { Server } from 'socket.io'; 
 import morgan from 'morgan';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
@@ -27,73 +27,7 @@ import routerDriverRegisterModal from './routes/driver/driverRegisterModal.route
 import routerDriverManagement from './routes/driver/driverManagement.route.js';
 
 const app = express();
-const httpServer = createServer(app); // Vinculamos express al servidor HTTP
-
-// --- CONFIGURACIÓN DE SOCKET.IO ---
-const io = new Server(httpServer, {
-    cors: {
-        origin: [
-            'http://localhost:5173',
-            'http://localhost:5174',
-            'https://deliveryaplication-ioll.vercel.app'
-        ],
-        methods: ["GET", "POST"],
-        credentials: true
-    }
-});
-
-// Guardamos la instancia de IO para usarla en los controladores
-app.set('socketio', io);
-
-io.on('connection', (socket) => {
-    console.log('📱 Nuevo dispositivo conectado:', socket.id);
-
-    // Canal privado para el repartidor (se une al loguearse)
-    socket.on('join_driver_room', (usuario_id) => {
-        socket.join(`user_${usuario_id}`);
-        console.log(`👷 Repartidor ${usuario_id} ahora escucha notificaciones privadas`);
-    });
-
-    socket.on('disconnect', () => {
-        console.log('❌ Dispositivo desconectado');
-    });
-});
-
-// --- LÓGICA DE TASA DE CAMBIO (BCV) ---
-const initializeExchangeRate = async () => {
-    try {
-        const res = await pool.query('SELECT COUNT(*) FROM exchange_rates');
-        const count = parseInt(res.rows[0].count);
-
-        if (count === 0) {
-            console.log("ℹ️ Base de datos de tasas vacía. Inicializando con valor actual del BCV...");
-            await runBcvScraper();
-        } else {
-            console.log(`✅ Base de datos de tasas lista (Registros: ${count})`);
-        }
-    } catch (error) {
-        console.error("❌ Error al inicializar la tasa:", error.message);
-    }
-};
-
-const taskWithRetry = async (attempt = 1) => {
-    const MAX_ATTEMPTS = 3;
-    const RETRY_DELAY = 10 * 60 * 1000;
-    console.log(`\n[${new Date().toLocaleString()}] Intentando actualización BCV (Intento ${attempt}/${MAX_ATTEMPTS})...`);
-    const result = await runBcvScraper();
-    if (result) {
-        console.log(`✅ Proceso completado exitosamente.`);
-    } else if (attempt < MAX_ATTEMPTS) {
-        console.log(`⚠️ Falló intento ${attempt}. Reintentando en 10 min...`);
-        setTimeout(() => taskWithRetry(attempt + 1), RETRY_DELAY);
-    } else {
-        console.error(`🚨 Se alcanzaron los ${MAX_ATTEMPTS} intentos. Fallo definitivo.`);
-    }
-};
-
-cron.schedule('2 9,16 * * 1-5', () => {
-    taskWithRetry();
-});
+const httpServer = createServer(app);
 
 // --- CONFIGURACIÓN DE CORS ---
 const allowedOrigins = [
@@ -107,14 +41,41 @@ app.use(cors({
         if (!origin || allowedOrigins.includes(origin)) {
             callback(null, true);
         } else {
-            console.warn(`⚠️ Origen bloqueado por CORS: ${origin}`);
-            callback(null, false); 
+            callback(new Error('Bloqueado por CORS'));
         }
     },
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
 }));
+
+// --- CONFIGURACIÓN DE SOCKET.IO ---
+const io = new Server(httpServer, {
+    cors: {
+        origin: allowedOrigins,
+        methods: ["GET", "POST"],
+        credentials: true
+    },
+    transports: ['polling', 'websocket'], // Prioriza polling para evitar errores de conexión inicial
+    allowEIO3: true
+});
+
+app.set('socketio', io);
+
+io.on('connection', (socket) => {
+    console.log('📱 Dispositivo conectado:', socket.id);
+
+    socket.on('join_driver_room', (usuario_id) => {
+        if (usuario_id) {
+            socket.join(`user_${usuario_id}`);
+            console.log(`👷 Repartidor ${usuario_id} unido a canal privado`);
+        }
+    });
+
+    socket.on('disconnect', (reason) => {
+        console.log('❌ Conexión cerrada:', reason);
+    });
+});
 
 // --- MIDDLEWARES ---
 app.use(morgan('dev'));
@@ -122,7 +83,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 
-// --- RUTAS ---
+// --- MONTAJE DE RUTAS ---
 app.use(routerCheckSesion);
 app.use(routerUsers);
 app.use(routerLogin);
@@ -137,27 +98,24 @@ app.use(routerVehicles);
 app.use(routerServices);
 app.use(routerDriverGetDrivers);
 app.use(routerDriverRegisterModal);
-app.use(routerDriverManagement);
-
-// --- MANEJO DE ERRORES GLOBAL ---
-app.use((err, req, res, next) => {
-    console.error('🔥 Error detectado:', err.stack);
-    res.status(err.status || 500).json({
-        status: "error",
-        message: err.message || "Error interno del servidor",
-    });
-});
+app.use(routerDriverManagement); // Aquí están tus nuevos endpoints de disponibilidad
 
 // --- LEVANTAR SERVIDOR ---
 const PORT = process.env.PORT || 4000;
 
-// IMPORTANTE: Cambiamos app.listen por httpServer.listen
 httpServer.listen(PORT, '0.0.0.0', async () => {
     console.log("--------------------------");
-    console.log(`🚀 Gazzella Express Running on port ${PORT}`);
+    console.log(`🚀 Gazzella Express en puerto ${PORT}`);
     
-    await initializeExchangeRate(); 
-    
+    // Inicialización BCV
+    try {
+        const res = await pool.query('SELECT COUNT(*) FROM exchange_rates');
+        if (parseInt(res.rows[0].count) === 0) {
+            await runBcvScraper();
+        }
+    } catch (e) {
+        console.error("Error inicializando tasa:", e.message);
+    }
     console.log("--------------------------");
 });
 
