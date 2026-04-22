@@ -4,7 +4,7 @@ import {
     getCurrentOrder, 
     completeOrder 
 } from '../../controllers/drivers/managementDriver.controller.js';
-import { verifyToken } from '../middlewares/auth.middleware.js'; // Tu middleware de JWT
+import { verifyToken } from '../middlewares/verifyToken.js'; // 👈 Importar el middleware
 
 const routerDriverManagement = Router();
 
