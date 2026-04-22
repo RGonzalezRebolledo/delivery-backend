@@ -24,6 +24,7 @@ import routerVehicles from './routes/administrator/typeVhicle.route.js';
 import routerServices from './routes/administrator/typeServices.route.js';
 import routerDriverGetDrivers from './routes/driver/driver.route.js';
 import routerDriverRegisterModal from './routes/driver/driverRegisterModal.route.js';
+import routerDriverManagement from './routes/driver/driverManagement.route.js';
 
 const app = express();
 const httpServer = createServer(app); // Vinculamos express al servidor HTTP
@@ -136,6 +137,7 @@ app.use(routerVehicles);
 app.use(routerServices);
 app.use(routerDriverGetDrivers);
 app.use(routerDriverRegisterModal);
+app.use(routerDriverManagement);
 
 // --- MANEJO DE ERRORES GLOBAL ---
 app.use((err, req, res, next) => {
