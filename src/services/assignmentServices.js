@@ -1,6 +1,12 @@
 import { pool } from '../db.js';
 
 export const assignPendingOrders = async (io) => {
+    // Validación de seguridad para evitar errores si io no llega
+    if (!io) {
+        console.error("❌ No se pudo ejecutar asignación: La instancia de Socket.io es undefined");
+        return;
+    }
+
     const client = await pool.connect();
     
     try {
@@ -56,9 +62,14 @@ export const assignPendingOrders = async (io) => {
 
         await client.query('COMMIT');
 
-        // 4. 🔥 NOTIFICACIÓN EN TIEMPO REAL (Sincronizada con el Frontend)
+        // 4. 🔥 NOTIFICACIÓN EN TIEMPO REAL
         const targetRoom = `driver_${driverId}`;
         
+        // Verificación de sockets conectados en esa sala para depuración
+        const activeSockets = io.sockets.adapter.rooms.get(targetRoom);
+        console.log(`📡 Intentando notificar a sala: ${targetRoom} (${activeSockets ? activeSockets.size : 0} dispositivos)`);
+
+        // Emitimos el evento
         io.to(targetRoom).emit('NUEVO_PEDIDO', {
             pedido_id: pedido.id,
             monto: pedido.monto,
@@ -68,7 +79,7 @@ export const assignPendingOrders = async (io) => {
             estado: 'asignado'
         });
 
-        console.log(`✅ Pedido ${pedido.id} asignado y emitido a sala: ${targetRoom}`);
+        console.log(`✅ Pedido ${pedido.id} asignado y emitido a repartidor ${driverId}`);
 
     } catch (error) {
         await client.query('ROLLBACK');
@@ -77,6 +88,7 @@ export const assignPendingOrders = async (io) => {
         client.release();
     }
 };
+
 
 // import { pool } from '../db.js';
 
@@ -98,7 +110,6 @@ export const assignPendingOrders = async (io) => {
 //             ORDER BY p.fecha_pedido ASC
 //             LIMIT 1 FOR UPDATE SKIP LOCKED; 
 //         `;
-//         // 'FOR UPDATE SKIP LOCKED' evita que dos procesos asignen el mismo pedido a la vez
 
 //         const orderRes = await client.query(pendingQuery);
 //         if (orderRes.rows.length === 0) {
@@ -108,7 +119,7 @@ export const assignPendingOrders = async (io) => {
 
 //         const pedido = orderRes.rows[0];
 
-//         // 2. Buscamos al repartidor disponible que más tiempo lleva esperando
+//         // 2. Buscamos al repartidor disponible
 //         const driverQuery = `
 //             SELECT usuario_id FROM repartidores 
 //             WHERE is_available = true AND is_active = 'activo'
@@ -124,7 +135,7 @@ export const assignPendingOrders = async (io) => {
 
 //         const driverId = driverRes.rows[0].usuario_id;
 
-//         // 3. Ejecutamos la asignación
+//         // 3. Ejecutamos la actualización en la DB
 //         await client.query(
 //             "UPDATE pedidos SET repartidor_id = $1, estado = 'asignado' WHERE id = $2",
 //             [driverId, pedido.id]
@@ -137,9 +148,10 @@ export const assignPendingOrders = async (io) => {
 
 //         await client.query('COMMIT');
 
-//         // 4. 🔥 NOTIFICACIÓN EN TIEMPO REAL
-//         // Enviamos el objeto con el formato que espera tu Dashboard
-//         io.to(`driver_${driverId}`).emit('NUEVO_PEDIDO', {
+//         // 4. 🔥 NOTIFICACIÓN EN TIEMPO REAL (Sincronizada con el Frontend)
+//         const targetRoom = `driver_${driverId}`;
+        
+//         io.to(targetRoom).emit('NUEVO_PEDIDO', {
 //             pedido_id: pedido.id,
 //             monto: pedido.monto,
 //             cliente_nombre: pedido.cliente_nombre,
@@ -148,7 +160,7 @@ export const assignPendingOrders = async (io) => {
 //             estado: 'asignado'
 //         });
 
-//         console.log(`✅ Pedido ${pedido.id} asignado automáticamente al driver ${driverId}`);
+//         console.log(`✅ Pedido ${pedido.id} asignado y emitido a sala: ${targetRoom}`);
 
 //     } catch (error) {
 //         await client.query('ROLLBACK');
@@ -157,3 +169,4 @@ export const assignPendingOrders = async (io) => {
 //         client.release();
 //     }
 // };
+
