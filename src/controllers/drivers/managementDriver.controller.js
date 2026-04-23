@@ -1,9 +1,12 @@
 import { pool } from '../../db.js';
+import { assignPendingOrders } from '../services/assignmentService.js'; // Asegúrate de que la ruta sea correcta
 
 // 1. ACTIVAR/DESACTIVAR DISPONIBILIDAD
 export const toggleAvailability = async (req, res) => {
     const { available } = req.body;
     const userId = req.userId;
+    // 💡 Obtenemos la instancia de socket.io guardada en app.js
+    const io = req.app.get('socketio'); 
 
     try {
         // 🛡️ VALIDACIÓN DE SEGURIDAD: Verificar si no está suspendido antes de actualizar
@@ -32,13 +35,30 @@ export const toggleAvailability = async (req, res) => {
         `;
         const result = await pool.query(query, [available, userId]);
 
+        const isNowAvailable = result.rows[0].is_available;
+
+        // 🚀 LÓGICA DE ASIGNACIÓN AUTOMÁTICA
+        // Si el repartidor se acaba de poner disponible, ejecutamos el buscador de pedidos pendientes
+        if (isNowAvailable) {
+            // No usamos await aquí para que la respuesta al cliente sea rápida, 
+            // el proceso de asignación se ejecuta en segundo plano.
+            assignPendingOrders(io);
+        }
+
         res.json({
             success: true,
-            isAvailable: result.rows[0].is_available,
-            message: available ? 'Ahora estás en la cola de espera.' : 'Te has desconectado de la cola.'
+            isAvailable: isNowAvailable,
+            message: isNowAvailable 
+                ? 'Ahora estás en la cola de espera. Buscando pedidos pendientes...' 
+                : 'Te has desconectado de la cola.'
         });
+
     } catch (error) {
-        res.status(500).json({ error: 'Error al cambiar disponibilidad', details: error.message });
+        console.error("Error en toggleAvailability:", error);
+        res.status(500).json({ 
+            error: 'Error al cambiar disponibilidad', 
+            details: error.message 
+        });
     }
 };
 
