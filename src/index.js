@@ -66,19 +66,34 @@ const io = new Server(httpServer, {
 // Guardar instancia para usar en controladores
 app.set('socketio', io);
 
+// io.on('connection', (socket) => {
+//     console.log('📱 Dispositivo conectado:', socket.id);
+
+//     socket.on('join_driver_room', (usuario_id) => {
+//         if (usuario_id) {
+//             // ✅ Cambiado a driver_ para coincidir con el servicio de asignación
+//             socket.join(`driver_${usuario_id}`);
+//             console.log(`👷 Repartidor ${usuario_id} unido a canal privado driver_${usuario_id}`);
+//         }
+//     });
+
+//     socket.on('disconnect', (reason) => {
+//         console.log('❌ Conexión cerrada:', reason);
+//     });
+// });
+
 io.on('connection', (socket) => {
     console.log('📱 Dispositivo conectado:', socket.id);
 
     socket.on('join_driver_room', (usuario_id) => {
         if (usuario_id) {
-            // ✅ Cambiado a driver_ para coincidir con el servicio de asignación
-            socket.join(`driver_${usuario_id}`);
-            console.log(`👷 Repartidor ${usuario_id} unido a canal privado driver_${usuario_id}`);
+            const room = `driver_${usuario_id}`;
+            socket.join(room);
+            console.log(`👷 Repartidor ${usuario_id} unido a canal: ${room}`);
+            
+            // Confirmación opcional para el frontend
+            socket.emit('room_joined', room); 
         }
-    });
-
-    socket.on('disconnect', (reason) => {
-        console.log('❌ Conexión cerrada:', reason);
     });
 });
 

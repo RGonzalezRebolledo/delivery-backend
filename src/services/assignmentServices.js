@@ -1,7 +1,6 @@
 import { pool } from '../db.js';
 
 export const assignPendingOrders = async (io) => {
-    // Validación de seguridad para evitar errores si io no llega
     if (!io) {
         console.error("❌ No se pudo ejecutar asignación: La instancia de Socket.io es undefined");
         return;
@@ -49,7 +48,7 @@ export const assignPendingOrders = async (io) => {
 
         const driverId = driverRes.rows[0].usuario_id;
 
-        // 3. Ejecutamos la actualización en la DB
+        // 3. Actualización de DB
         await client.query(
             "UPDATE pedidos SET repartidor_id = $1, estado = 'asignado' WHERE id = $2",
             [driverId, pedido.id]
@@ -65,11 +64,12 @@ export const assignPendingOrders = async (io) => {
         // 4. 🔥 NOTIFICACIÓN EN TIEMPO REAL
         const targetRoom = `driver_${driverId}`;
         
-        // Verificación de sockets conectados en esa sala para depuración
+        // Log para verificar si el socket está realmente en la sala
         const activeSockets = io.sockets.adapter.rooms.get(targetRoom);
-        console.log(`📡 Intentando notificar a sala: ${targetRoom} (${activeSockets ? activeSockets.size : 0} dispositivos)`);
+        const numDevices = activeSockets ? activeSockets.size : 0;
+        
+        console.log(`📡 Notificando a sala: ${targetRoom} | Dispositivos activos: ${numDevices}`);
 
-        // Emitimos el evento
         io.to(targetRoom).emit('NUEVO_PEDIDO', {
             pedido_id: pedido.id,
             monto: pedido.monto,
@@ -79,7 +79,7 @@ export const assignPendingOrders = async (io) => {
             estado: 'asignado'
         });
 
-        console.log(`✅ Pedido ${pedido.id} asignado y emitido a repartidor ${driverId}`);
+        console.log(`✅ Pedido ${pedido.id} emitido con éxito al repartidor ${driverId}`);
 
     } catch (error) {
         await client.query('ROLLBACK');
@@ -93,6 +93,12 @@ export const assignPendingOrders = async (io) => {
 // import { pool } from '../db.js';
 
 // export const assignPendingOrders = async (io) => {
+//     // Validación de seguridad para evitar errores si io no llega
+//     if (!io) {
+//         console.error("❌ No se pudo ejecutar asignación: La instancia de Socket.io es undefined");
+//         return;
+//     }
+
 //     const client = await pool.connect();
     
 //     try {
@@ -148,9 +154,14 @@ export const assignPendingOrders = async (io) => {
 
 //         await client.query('COMMIT');
 
-//         // 4. 🔥 NOTIFICACIÓN EN TIEMPO REAL (Sincronizada con el Frontend)
+//         // 4. 🔥 NOTIFICACIÓN EN TIEMPO REAL
 //         const targetRoom = `driver_${driverId}`;
         
+//         // Verificación de sockets conectados en esa sala para depuración
+//         const activeSockets = io.sockets.adapter.rooms.get(targetRoom);
+//         console.log(`📡 Intentando notificar a sala: ${targetRoom} (${activeSockets ? activeSockets.size : 0} dispositivos)`);
+
+//         // Emitimos el evento
 //         io.to(targetRoom).emit('NUEVO_PEDIDO', {
 //             pedido_id: pedido.id,
 //             monto: pedido.monto,
@@ -160,7 +171,7 @@ export const assignPendingOrders = async (io) => {
 //             estado: 'asignado'
 //         });
 
-//         console.log(`✅ Pedido ${pedido.id} asignado y emitido a sala: ${targetRoom}`);
+//         console.log(`✅ Pedido ${pedido.id} asignado y emitido a repartidor ${driverId}`);
 
 //     } catch (error) {
 //         await client.query('ROLLBACK');
@@ -169,4 +180,5 @@ export const assignPendingOrders = async (io) => {
 //         client.release();
 //     }
 // };
+
 

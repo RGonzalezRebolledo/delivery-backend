@@ -5,8 +5,6 @@ import { assignPendingOrders } from '../../services/assignmentServices.js';
 export const toggleAvailability = async (req, res) => {
     const { available } = req.body;
     const userId = req.userId;
-    
-    // Obtener la instancia de socketio configurada en index.js
     const io = req.app.get('socketio'); 
 
     try {
@@ -21,7 +19,6 @@ export const toggleAvailability = async (req, res) => {
 
         const currentStatus = checkStatus.rows[0].is_active;
 
-        // Bloquear si está suspendido y quiere ponerse en línea
         if (currentStatus === 'suspendido' && available === true) {
             return res.status(403).json({ 
                 success: false, 
@@ -39,15 +36,14 @@ export const toggleAvailability = async (req, res) => {
         const result = await pool.query(query, [available, userId]);
         const isNowAvailable = result.rows[0].is_available;
 
-        // 🚀 DISPARADOR CRÍTICO: 
-        // Si el conductor se pone disponible, ejecutamos la asignación.
-        // Pasamos 'io' para que el servicio pueda emitir el evento 'NUEVO_PEDIDO'
+        // 🚀 MEJORA: Retraso de 500ms para asegurar que el socket del frontend 
+        // haya tenido tiempo de unirse a la sala 'driver_ID' tras el cambio de estado.
         if (isNowAvailable && currentStatus !== 'suspendido') {
-            console.log(`👷 Conductor ${userId} disponible. Buscando asignaciones...`);
-            // Usamos setImmediate para no bloquear la respuesta HTTP
-            setImmediate(() => {
+            console.log(`👷 Conductor ${userId} disponible. Buscando pedidos...`);
+            
+            setTimeout(() => {
                 assignPendingOrders(io);
-            });
+            }, 500); 
         }
 
         res.json({
