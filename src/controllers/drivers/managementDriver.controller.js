@@ -1,5 +1,5 @@
 import { pool } from '../../db.js';
-import { assignPendingOrders } from '../services/assignmentService.js'; // Asegúrate de que la ruta sea correcta
+import { assignPendingOrders } from '../../services/assignmentServices.js'; // Asegúrate de que la ruta sea correcta
 
 // 1. ACTIVAR/DESACTIVAR DISPONIBILIDAD
 export const toggleAvailability = async (req, res) => {
