@@ -42,6 +42,7 @@ export const toggleAvailability = async (req, res) => {
             console.log(`👷 Conductor ${userId} disponible. Buscando pedidos...`);
             
             setTimeout(() => {
+                console.log("¿Existe la instancia de IO?:", !!io); // Si sale false, aquí está el problema
                 assignPendingOrders(io);
             }, 500); 
         }

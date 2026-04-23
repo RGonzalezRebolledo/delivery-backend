@@ -56,48 +56,41 @@ const io = new Server(httpServer, {
         methods: ["GET", "POST"],
         credentials: true
     },
-    transports: ['polling', 'websocket'],
+    transports: ['websocket', 'polling'],
     pingTimeout: 60000,
-    pingInterval: 25000,
-    connectTimeout: 45000,
-    allowEIO3: true
+    pingInterval: 25000
 });
 
-// Guardar instancia para usar en controladores
+// Guardar instancia para que sea accesible desde los controladores (req.app.get('socketio'))
 app.set('socketio', io);
 
-// io.on('connection', (socket) => {
-//     console.log('📱 Dispositivo conectado:', socket.id);
-
-//     socket.on('join_driver_room', (usuario_id) => {
-//         if (usuario_id) {
-//             // ✅ Cambiado a driver_ para coincidir con el servicio de asignación
-//             socket.join(`driver_${usuario_id}`);
-//             console.log(`👷 Repartidor ${usuario_id} unido a canal privado driver_${usuario_id}`);
-//         }
-//     });
-
-//     socket.on('disconnect', (reason) => {
-//         console.log('❌ Conexión cerrada:', reason);
-//     });
-// });
-
+// --- GESTIÓN DE EVENTOS SOCKET.IO ---
 io.on('connection', (socket) => {
     console.log('📱 Dispositivo conectado:', socket.id);
 
     socket.on('join_driver_room', (usuario_id) => {
         if (usuario_id) {
             const room = `driver_${usuario_id}`;
-            socket.join(room);
-            console.log(`👷 Repartidor ${usuario_id} unido a canal: ${room}`);
             
-            // Confirmación opcional para el frontend
+            // Limpiamos uniones previas para asegurar que solo esté en su sala actual
+            socket.rooms.forEach(r => { 
+                if(r !== socket.id) socket.leave(r); 
+            });
+
+            socket.join(room);
+            console.log(`✅ Repartidor ${usuario_id} unido a canal: ${room}`);
+            
+            // Confirmación al frontend
             socket.emit('room_joined', room); 
         }
     });
+
+    socket.on('disconnect', (reason) => {
+        console.log(`❌ Conexión cerrada (${socket.id}):`, reason);
+    });
 });
 
-// --- LÓGICA CRON BCV (Agregada) ---
+// --- LÓGICA CRON BCV ---
 cron.schedule('2 9,16 * * 1-5', async () => {
     console.log(`[${new Date().toLocaleString()}] Ejecutando actualización programada BCV...`);
     await runBcvScraper();
@@ -126,7 +119,7 @@ app.use(routerDriverGetDrivers);
 app.use(routerDriverRegisterModal);
 app.use(routerDriverManagement);
 
-// --- MANEJO DE ERRORES GLOBAL (Agregado para evitar caídas del server) ---
+// --- MANEJO DE ERRORES GLOBAL ---
 app.use((err, req, res, next) => {
     console.error('🔥 Error detectado:', err.stack);
     res.status(err.status || 500).json({
@@ -139,14 +132,14 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 4000;
 
 httpServer.listen(PORT, '0.0.0.0', async () => {
-    console.log("--------------------------");
-    console.log(`🚀 Gazzella Express en puerto ${PORT}`);
+    console.log("-------------------------------------------");
+    console.log(`🚀 Gazzella Express Server en puerto ${PORT}`);
     
     // Inicialización BCV
     try {
         const res = await pool.query('SELECT COUNT(*) FROM exchange_rates');
         if (parseInt(res.rows[0].count) === 0) {
-            console.log("ℹ️ Base de tasas vacía, scrapeando...");
+            console.log("ℹ️ Base de tasas vacía, scrapeando inicial...");
             await runBcvScraper();
         } else {
             console.log("✅ Tasas de cambio verificadas.");
@@ -154,9 +147,8 @@ httpServer.listen(PORT, '0.0.0.0', async () => {
     } catch (e) {
         console.error("Error inicializando tasa:", e.message);
     }
-    console.log("--------------------------");
+    console.log("-------------------------------------------");
 });
-
 
 // import 'dotenv/config';
 // import express from 'express';
@@ -216,28 +208,51 @@ httpServer.listen(PORT, '0.0.0.0', async () => {
 //         methods: ["GET", "POST"],
 //         credentials: true
 //     },
-//     transports: ['polling', 'websocket'], // Prioriza polling para evitar errores de conexión inicial
-//     pingTimeout: 60000, // Aumentamos el tiempo de espera
+//     transports: ['polling', 'websocket'],
+//     pingTimeout: 60000,
 //     pingInterval: 25000,
 //     connectTimeout: 45000,
 //     allowEIO3: true
 // });
 
+// // Guardar instancia para usar en controladores
 // app.set('socketio', io);
+
+// // io.on('connection', (socket) => {
+// //     console.log('📱 Dispositivo conectado:', socket.id);
+
+// //     socket.on('join_driver_room', (usuario_id) => {
+// //         if (usuario_id) {
+// //             // ✅ Cambiado a driver_ para coincidir con el servicio de asignación
+// //             socket.join(`driver_${usuario_id}`);
+// //             console.log(`👷 Repartidor ${usuario_id} unido a canal privado driver_${usuario_id}`);
+// //         }
+// //     });
+
+// //     socket.on('disconnect', (reason) => {
+// //         console.log('❌ Conexión cerrada:', reason);
+// //     });
+// // });
 
 // io.on('connection', (socket) => {
 //     console.log('📱 Dispositivo conectado:', socket.id);
 
 //     socket.on('join_driver_room', (usuario_id) => {
 //         if (usuario_id) {
-//             socket.join(`user_${usuario_id}`);
-//             console.log(`👷 Repartidor ${usuario_id} unido a canal privado`);
+//             const room = `driver_${usuario_id}`;
+//             socket.join(room);
+//             console.log(`👷 Repartidor ${usuario_id} unido a canal: ${room}`);
+            
+//             // Confirmación opcional para el frontend
+//             socket.emit('room_joined', room); 
 //         }
 //     });
+// });
 
-//     socket.on('disconnect', (reason) => {
-//         console.log('❌ Conexión cerrada:', reason);
-//     });
+// // --- LÓGICA CRON BCV (Agregada) ---
+// cron.schedule('2 9,16 * * 1-5', async () => {
+//     console.log(`[${new Date().toLocaleString()}] Ejecutando actualización programada BCV...`);
+//     await runBcvScraper();
 // });
 
 // // --- MIDDLEWARES ---
@@ -261,7 +276,16 @@ httpServer.listen(PORT, '0.0.0.0', async () => {
 // app.use(routerServices);
 // app.use(routerDriverGetDrivers);
 // app.use(routerDriverRegisterModal);
-// app.use(routerDriverManagement); // Aquí están tus nuevos endpoints de disponibilidad
+// app.use(routerDriverManagement);
+
+// // --- MANEJO DE ERRORES GLOBAL (Agregado para evitar caídas del server) ---
+// app.use((err, req, res, next) => {
+//     console.error('🔥 Error detectado:', err.stack);
+//     res.status(err.status || 500).json({
+//         status: "error",
+//         message: err.message || "Error interno del servidor",
+//     });
+// });
 
 // // --- LEVANTAR SERVIDOR ---
 // const PORT = process.env.PORT || 4000;
@@ -274,13 +298,13 @@ httpServer.listen(PORT, '0.0.0.0', async () => {
 //     try {
 //         const res = await pool.query('SELECT COUNT(*) FROM exchange_rates');
 //         if (parseInt(res.rows[0].count) === 0) {
+//             console.log("ℹ️ Base de tasas vacía, scrapeando...");
 //             await runBcvScraper();
+//         } else {
+//             console.log("✅ Tasas de cambio verificadas.");
 //         }
 //     } catch (e) {
 //         console.error("Error inicializando tasa:", e.message);
 //     }
 //     console.log("--------------------------");
 // });
-
-
-

@@ -2,7 +2,7 @@ import { pool } from '../db.js';
 
 export const assignPendingOrders = async (io) => {
     if (!io) {
-        console.error("❌ No se pudo ejecutar asignación: La instancia de Socket.io es undefined");
+        console.error("❌ Error Crítico: La instancia de Socket.io no llegó al servicio.");
         return;
     }
 
@@ -42,6 +42,7 @@ export const assignPendingOrders = async (io) => {
 
         const driverRes = await client.query(driverQuery);
         if (driverRes.rows.length === 0) {
+            console.log("ℹ️ No hay repartidores disponibles para el pedido:", pedido.id);
             await client.query('COMMIT');
             return;
         }
@@ -61,39 +62,40 @@ export const assignPendingOrders = async (io) => {
 
         await client.query('COMMIT');
 
-        // 4. 🔥 NOTIFICACIÓN EN TIEMPO REAL
+        // 4. 🔥 NOTIFICACIÓN CON VERIFICACIÓN REAL
         const targetRoom = `driver_${driverId}`;
         
-        // Log para verificar si el socket está realmente en la sala
-        const activeSockets = io.sockets.adapter.rooms.get(targetRoom);
-        const numDevices = activeSockets ? activeSockets.size : 0;
+        // Obtenemos los sockets reales en la sala
+        const socketsInRoom = await io.in(targetRoom).fetchSockets();
+        const count = socketsInRoom.length;
         
-        console.log(`📡 Notificando a sala: ${targetRoom} | Dispositivos activos: ${numDevices}`);
+        console.log(`📡 Notificando a: ${targetRoom} | Dispositivos en escucha: ${count}`);
 
-        io.to(targetRoom).emit('NUEVO_PEDIDO', {
-            pedido_id: pedido.id,
-            monto: pedido.monto,
-            cliente_nombre: pedido.cliente_nombre,
-            recogida: pedido.recogida,
-            entrega: pedido.entrega,
-            estado: 'asignado'
-        });
-
-        console.log(`✅ Pedido ${pedido.id} emitido con éxito al repartidor ${driverId}`);
+        if (count > 0) {
+            io.to(targetRoom).emit('NUEVO_PEDIDO', {
+                pedido_id: pedido.id,
+                monto: pedido.monto,
+                cliente_nombre: pedido.cliente_nombre,
+                recogida: pedido.recogida,
+                entrega: pedido.entrega,
+                estado: 'asignado'
+            });
+            console.log(`✅ Evento emitido a driver_${driverId}`);
+        } else {
+            console.warn(`⚠️ El repartidor ${driverId} está disponible en DB pero su Socket NO está en la sala.`);
+        }
 
     } catch (error) {
         await client.query('ROLLBACK');
-        console.error("❌ Error en asignación automática:", error);
+        console.error("❌ Error en asignación:", error);
     } finally {
         client.release();
     }
 };
 
-
-// import { pool } from '../db.js';
+/ import { pool } from '../db.js';
 
 // export const assignPendingOrders = async (io) => {
-//     // Validación de seguridad para evitar errores si io no llega
 //     if (!io) {
 //         console.error("❌ No se pudo ejecutar asignación: La instancia de Socket.io es undefined");
 //         return;
@@ -141,7 +143,7 @@ export const assignPendingOrders = async (io) => {
 
 //         const driverId = driverRes.rows[0].usuario_id;
 
-//         // 3. Ejecutamos la actualización en la DB
+//         // 3. Actualización de DB
 //         await client.query(
 //             "UPDATE pedidos SET repartidor_id = $1, estado = 'asignado' WHERE id = $2",
 //             [driverId, pedido.id]
@@ -157,11 +159,12 @@ export const assignPendingOrders = async (io) => {
 //         // 4. 🔥 NOTIFICACIÓN EN TIEMPO REAL
 //         const targetRoom = `driver_${driverId}`;
         
-//         // Verificación de sockets conectados en esa sala para depuración
+//         // Log para verificar si el socket está realmente en la sala
 //         const activeSockets = io.sockets.adapter.rooms.get(targetRoom);
-//         console.log(`📡 Intentando notificar a sala: ${targetRoom} (${activeSockets ? activeSockets.size : 0} dispositivos)`);
+//         const numDevices = activeSockets ? activeSockets.size : 0;
+        
+//         console.log(`📡 Notificando a sala: ${targetRoom} | Dispositivos activos: ${numDevices}`);
 
-//         // Emitimos el evento
 //         io.to(targetRoom).emit('NUEVO_PEDIDO', {
 //             pedido_id: pedido.id,
 //             monto: pedido.monto,
@@ -171,7 +174,7 @@ export const assignPendingOrders = async (io) => {
 //             estado: 'asignado'
 //         });
 
-//         console.log(`✅ Pedido ${pedido.id} asignado y emitido a repartidor ${driverId}`);
+//         console.log(`✅ Pedido ${pedido.id} emitido con éxito al repartidor ${driverId}`);
 
 //     } catch (error) {
 //         await client.query('ROLLBACK');
