@@ -5,11 +5,9 @@ import { assignPendingOrders } from '../../services/assignmentServices.js'; // A
 export const toggleAvailability = async (req, res) => {
     const { available } = req.body;
     const userId = req.userId;
-    // 💡 Obtenemos la instancia de socket.io guardada en app.js
     const io = req.app.get('socketio'); 
 
     try {
-        // 🛡️ VALIDACIÓN DE SEGURIDAD: Verificar si no está suspendido antes de actualizar
         const checkStatus = await pool.query(
             "SELECT is_active FROM repartidores WHERE usuario_id = $1",
             [userId]
@@ -19,10 +17,13 @@ export const toggleAvailability = async (req, res) => {
             return res.status(404).json({ error: 'Perfil de repartidor no encontrado' });
         }
 
-        if (checkStatus.rows[0].is_active === 'suspendido') {
+        const currentStatus = checkStatus.rows[0].is_active;
+
+        // 🛡️ Permitir desconectarse (false), pero bloquear conectarse (true) si está suspendido
+        if (currentStatus === 'suspendido' && available === true) {
             return res.status(403).json({ 
                 success: false, 
-                message: 'Tu cuenta está suspendida. No puedes cambiar tu disponibilidad.' 
+                message: 'Tu cuenta está suspendida. No puedes ponerte en línea.' 
             });
         }
 
@@ -34,14 +35,10 @@ export const toggleAvailability = async (req, res) => {
             RETURNING is_available;
         `;
         const result = await pool.query(query, [available, userId]);
-
         const isNowAvailable = result.rows[0].is_available;
 
-        // 🚀 LÓGICA DE ASIGNACIÓN AUTOMÁTICA
-        // Si el repartidor se acaba de poner disponible, ejecutamos el buscador de pedidos pendientes
-        if (isNowAvailable) {
-            // No usamos await aquí para que la respuesta al cliente sea rápida, 
-            // el proceso de asignación se ejecuta en segundo plano.
+        // 🚀 Lógica de asignación automática (solo si se puso disponible y no está suspendido)
+        if (isNowAvailable && currentStatus !== 'suspendido') {
             assignPendingOrders(io);
         }
 
@@ -49,16 +46,13 @@ export const toggleAvailability = async (req, res) => {
             success: true,
             isAvailable: isNowAvailable,
             message: isNowAvailable 
-                ? 'Ahora estás en la cola de espera. Buscando pedidos pendientes...' 
-                : 'Te has desconectado de la cola.'
+                ? 'Conectado. Buscando pedidos pendientes...' 
+                : 'Te has desconectado.'
         });
 
     } catch (error) {
         console.error("Error en toggleAvailability:", error);
-        res.status(500).json({ 
-            error: 'Error al cambiar disponibilidad', 
-            details: error.message 
-        });
+        res.status(500).json({ error: 'Error al cambiar disponibilidad' });
     }
 };
 
