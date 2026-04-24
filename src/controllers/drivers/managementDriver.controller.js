@@ -146,6 +146,68 @@ export const completeOrder = async (req, res) => {
     }
 };
 
+
+export const updateOrderStatus = async (req, res) => {
+    const { pedido_id, status } = req.body;
+    const driverId = req.userId; // Obtenido del middleware de auth
+
+    const client = await pool.connect();
+
+    try {
+        await client.query("BEGIN");
+
+        if (status === 'pendiente') {
+            // --- EL CONDUCTOR RECHAZÓ O SE LE ACABÓ EL TIEMPO ---
+            
+            // 1. Desvincular el pedido y ponerlo en pendiente
+            await client.query(
+                `UPDATE pedidos SET repartidor_id = NULL, estado = 'pendiente' WHERE id = $1`,
+                [pedido_id]
+            );
+
+            // 2. Mandar al conductor al final de la cola
+            // Al actualizar 'available_since' a NOW(), el ORDER BY ASC lo pondrá de último
+            await client.query(
+                `UPDATE repartidores 
+                 SET is_available = true, available_since = NOW() 
+                 WHERE usuario_id = $1`,
+                [driverId]
+            );
+
+        } else if (status === 'en camino') {
+            // --- EL CONDUCTOR ACEPTÓ EL PEDIDO ---
+            await client.query(
+                `UPDATE pedidos SET estado = 'en camino' WHERE id = $1`,
+                [pedido_id]
+            );
+            // El repartidor sigue con is_available = false porque está ocupado
+
+        } else if (status === 'entregado') {
+            // --- EL CONDUCTOR FINALIZÓ EL SERVICIO ---
+            await client.query(
+                `UPDATE pedidos SET estado = 'entregado', fecha_entrega = NOW() WHERE id = $1`,
+                [pedido_id]
+            );
+
+            // Volver a poner al conductor en la cola (al final)
+            await client.query(
+                `UPDATE repartidores 
+                 SET is_available = true, available_since = NOW() 
+                 WHERE usuario_id = $1`,
+                [driverId]
+            );
+        }
+
+        await client.query("COMMIT");
+        res.json({ success: true, message: `Estado actualizado a ${status}` });
+
+    } catch (error) {
+        await client.query("ROLLBACK");
+        res.status(500).json({ success: false, error: error.message });
+    } finally {
+        client.release();
+    }
+};
 // import { pool } from '../../db.js';
 // import { assignPendingOrders } from '../../services/assignmentServices.js'; // Asegúrate de que la ruta sea correcta
 
