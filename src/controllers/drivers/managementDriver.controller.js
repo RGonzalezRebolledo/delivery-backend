@@ -64,42 +64,47 @@ export const toggleAvailability = async (req, res) => {
 
 // 2. OBTENER PEDIDO ACTUAL Y STATUS DEL REPARTIDOR
 export const getCurrentOrder = async (req, res) => {
-    const userId = req.userId; // ID de la tabla usuarios
+    const userId = req.userId; 
 
     try {
+        // 1. Verificamos el estado del repartidor
         const driverQuery = `SELECT is_available, is_active FROM repartidores WHERE usuario_id = $1`;
-        
-        // CORRECCIÓN: Buscamos el pedido donde el repartidor vinculado tenga nuestro usuario_id
-        const orderQuery = `
-            SELECT p.id as pedido_id, p.total_dolar as monto, p.estado,
-                   u_c.nombre as cliente_nombre,
-                   dir_o.calle as recogida, dir_d.calle as entrega
-            FROM pedidos p
-            JOIN repartidores r ON p.repartidor_id = r.usuario_id
-            JOIN usuarios u_c ON p.cliente_id = u_c.id
-            JOIN direcciones dir_o ON p.direccion_origen_id = dir_o.id
-            JOIN direcciones dir_d ON p.direccion_destino_id = dir_d.id
-            WHERE r.usuario_id = $1 AND p.estado IN ('asignado', 'en_camino')
-            LIMIT 1;
-        `;
-
         const driverResult = await pool.query(driverQuery, [userId]);
-        const orderResult = await pool.query(orderQuery, [userId]);
 
         if (driverResult.rows.length === 0) {
             return res.status(404).json({ error: 'Repartidor no encontrado' });
         }
 
+        // 2. Buscamos el pedido DIRECTAMENTE en la tabla pedidos
+        // Eliminamos el JOIN innecesario a repartidores para evitar conflictos de ID
+        const orderQuery = `
+            SELECT p.id as pedido_id, p.total_dolar as monto, p.estado,
+                   u_c.nombre as cliente_nombre,
+                   dir_o.calle as recogida, dir_d.calle as entrega
+            FROM pedidos p
+            JOIN usuarios u_c ON p.cliente_id = u_c.id
+            JOIN direcciones dir_o ON p.direccion_origen_id = dir_o.id
+            JOIN direcciones dir_d ON p.direccion_destino_id = dir_d.id
+            WHERE p.repartidor_id = $1 
+              AND p.estado IN ('asignado', 'en_camino')
+            LIMIT 1;
+        `;
+
+        const orderResult = await pool.query(orderQuery, [userId]);
+
         const hasActiveOrder = orderResult.rows.length > 0;
+        
+        // Enviamos la respuesta limpia
         res.json({
             active: hasActiveOrder,
             order: hasActiveOrder ? orderResult.rows[0] : null,
             isAvailableInDB: driverResult.rows[0].is_available,
             status: driverResult.rows[0].is_active 
         });
+
     } catch (error) {
-        console.error("Error en getCurrentOrder:", error);
-        res.status(500).json({ error: 'Error interno' });
+        console.error("❌ Error en getCurrentOrder:", error);
+        res.status(500).json({ error: 'Error interno del servidor' });
     }
 };
 
