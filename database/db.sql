@@ -1,20 +1,20 @@
 -- ------------------------------------------------------------------
 -- SCRIPT COMPLETO CONSOLIDADO: GAZELLA EXPRESS (VENEZUELA UTC-4)
--- ACTUALIZACIÓN: SISTEMA DE COLA ESTÁTICA (FIFO) PARA REPARTIDORES
+-- ACTUALIZACIÓN: UNIFICACIÓN DE IDS PARA SOCKETS Y COLA FIFO
 -- ------------------------------------------------------------------
 
 -- 1. LIMPIEZA DE ENTORNO
 DROP VIEW IF EXISTS vista_pedidos_resumen;
-DROP TABLE IF EXISTS payments;
-DROP TABLE IF EXISTS repartidores_pedidos;
-DROP TABLE IF EXISTS pedido_detalles;
-DROP TABLE IF EXISTS pedidos;
-DROP TABLE IF EXISTS direcciones;
-DROP TABLE IF EXISTS productos;
-DROP TABLE IF EXISTS repartidores; 
-DROP TABLE IF EXISTS tipos_vehiculos;
-DROP TABLE IF EXISTS tipos_servicios;
-DROP TABLE IF EXISTS exchange_rates;
+DROP TABLE IF EXISTS payments CASCADE;
+DROP TABLE IF EXISTS repartidores_pedidos CASCADE;
+DROP TABLE IF EXISTS pedido_detalles CASCADE;
+DROP TABLE IF EXISTS pedidos CASCADE;
+DROP TABLE IF EXISTS direcciones CASCADE;
+DROP TABLE IF EXISTS productos CASCADE;
+DROP TABLE IF EXISTS repartidores CASCADE; 
+DROP TABLE IF EXISTS tipos_vehiculos CASCADE;
+DROP TABLE IF EXISTS tipos_servicios CASCADE;
+DROP TABLE IF EXISTS exchange_rates CASCADE;
 DROP TABLE IF EXISTS usuarios CASCADE; 
 
 -- Habilitar extensión para contraseñas seguras
@@ -67,19 +67,14 @@ CREATE TABLE repartidores (
     documento_identidad VARCHAR(50) NOT NULL,
     tipo_documento VARCHAR(20) NOT NULL CHECK (tipo_documento IN ('CI', 'Pasaporte', 'Licencia', 'Otro')),
     foto VARCHAR(255),
-    foto_vehiculo VARCHAR(255),  -- Nueva: Foto de la moto/carro
-    -- Control Administrativo para inactivar o activar el conductor en la plataforma
+    foto_vehiculo VARCHAR(255), 
     is_active VARCHAR(20) DEFAULT 'activo' CHECK (is_active IN ('activo','suspendido')),
     
-    -- Nuevos campos para la gestión de entregas (Cola Estática)
-    is_available BOOLEAN DEFAULT FALSE,             -- Switch On/Off del repartidor
-    available_since TIMESTAMP WITHOUT TIME ZONE,                   -- Fecha/Hora de ingreso a la cola (Posición FIFO)
-    ultima_entrega_at TIMESTAMP WITHOUT TIME ZONE                 -- Histórico para reportes
+    -- Gestión de entregas (Cola Estática)
+    is_available BOOLEAN DEFAULT FALSE,
+    available_since TIMESTAMP WITHOUT TIME ZONE,
+    ultima_entrega_at TIMESTAMP WITHOUT TIME ZONE 
 );
-
--- Índice parcial: Solo indexa repartidores disponibles para búsquedas ultrarrápidas de la cola
-CREATE INDEX idx_repartidores_fifo_queue ON repartidores (available_since) 
-WHERE is_available = TRUE;
 
 -- ------------------------------------------------------------------
 -- 4. LOGÍSTICA (Direcciones y Productos)
@@ -124,7 +119,8 @@ CREATE TABLE pedidos (
     municipio_origen VARCHAR(100),
     municipio_destino VARCHAR(100),
     pago_confirmado BOOLEAN DEFAULT FALSE,
-    repartidor_id INT REFERENCES usuarios(id)
+    -- CORRECCIÓN: Apunta a usuarios(id) para que coincida con el socket.id del Frontend
+    repartidor_id INT REFERENCES usuarios(id) 
 );
 
 CREATE TABLE payments (
@@ -156,10 +152,10 @@ CREATE TABLE pedido_detalles (
 
 CREATE TABLE repartidores_pedidos (
     id SERIAL PRIMARY KEY,
-    repartidor_id INT REFERENCES usuarios(id) ON DELETE CASCADE,
+    repartidor_id INT REFERENCES usuarios(id) ON DELETE CASCADE, -- Usar usuario_id
     pedido_id INT REFERENCES pedidos(id) ON DELETE CASCADE,
     fecha_asignacion TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    fecha_entrega TIMESTAMPTZ -- Para medir tiempos de respuesta
+    fecha_entrega TIMESTAMPTZ 
 );
 
 -- ------------------------------------------------------------------
@@ -184,8 +180,8 @@ JOIN usuarios u ON p.cliente_id = u.id
 JOIN direcciones d ON p.direccion_destino_id = d.id
 LEFT JOIN tipos_servicios ts ON p.tipo_servicio_id = ts.id
 LEFT JOIN payments pay ON p.id = pay.pedido_id
-LEFT JOIN repartidores_pedidos rp ON p.id = rp.pedido_id
-LEFT JOIN repartidores r ON rp.repartidor_id = r.usuario_id
+LEFT JOIN usuarios u_rep ON p.repartidor_id = u_rep.id -- Cambio aquí para usar la nueva referencia
+LEFT JOIN repartidores r ON u_rep.id = r.usuario_id
 LEFT JOIN tipos_vehiculos tv ON r.tipo_vehiculo_id = tv.id;
 
 -- ------------------------------------------------------------------
@@ -200,8 +196,13 @@ WHERE NOT EXISTS (SELECT 1 FROM usuarios WHERE email = 'ramongonzalez101@gmail.c
 CREATE INDEX idx_pedidos_cliente ON pedidos(cliente_id);
 CREATE INDEX idx_payments_ref ON payments(referencia_bancaria);
 CREATE INDEX idx_repartidores_disponibilidad ON repartidores(is_available);
+CREATE INDEX idx_repartidores_fifo_queue ON repartidores (available_since) WHERE is_available = TRUE;
+
+
+
 -- -- ------------------------------------------------------------------
 -- -- SCRIPT COMPLETO CONSOLIDADO: GAZELLA EXPRESS (VENEZUELA UTC-4)
+-- -- ACTUALIZACIÓN: SISTEMA DE COLA ESTÁTICA (FIFO) PARA REPARTIDORES
 -- -- ------------------------------------------------------------------
 
 -- -- 1. LIMPIEZA DE ENTORNO
@@ -229,7 +230,7 @@ CREATE INDEX idx_repartidores_disponibilidad ON repartidores(is_available);
 --     id SERIAL PRIMARY KEY,
 --     rate NUMERIC(10, 4) NOT NULL,
 --     currency VARCHAR(10) DEFAULT 'USD',
---     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+--     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 -- );
 
 -- CREATE TABLE tipos_vehiculos (
@@ -260,14 +261,27 @@ CREATE INDEX idx_repartidores_disponibilidad ON repartidores(is_available);
 --     password_hash VARCHAR(255) NOT NULL
 -- );
 
+-- -- REPARTIDORES: Incorporación de lógica de disponibilidad y cola FIFO
 -- CREATE TABLE repartidores (
 --     id SERIAL PRIMARY KEY,
 --     usuario_id INT REFERENCES usuarios(id) ON DELETE CASCADE UNIQUE, 
 --     tipo_vehiculo_id INT REFERENCES tipos_vehiculos(id),
 --     documento_identidad VARCHAR(50) NOT NULL,
---     tipo_documento VARCHAR(20) NOT NULL CHECK (tipo_documento IN ('DNI', 'Pasaporte', 'Licencia', 'Otro')),
---     foto VARCHAR(255) 
+--     tipo_documento VARCHAR(20) NOT NULL CHECK (tipo_documento IN ('CI', 'Pasaporte', 'Licencia', 'Otro')),
+--     foto VARCHAR(255),
+--     foto_vehiculo VARCHAR(255),  -- Nueva: Foto de la moto/carro
+--     -- Control Administrativo para inactivar o activar el conductor en la plataforma
+--     is_active VARCHAR(20) DEFAULT 'activo' CHECK (is_active IN ('activo','suspendido')),
+    
+--     -- Nuevos campos para la gestión de entregas (Cola Estática)
+--     is_available BOOLEAN DEFAULT FALSE,             -- Switch On/Off del repartidor
+--     available_since TIMESTAMP WITHOUT TIME ZONE,                   -- Fecha/Hora de ingreso a la cola (Posición FIFO)
+--     ultima_entrega_at TIMESTAMP WITHOUT TIME ZONE                 -- Histórico para reportes
 -- );
+
+-- -- Índice parcial: Solo indexa repartidores disponibles para búsquedas ultrarrápidas de la cola
+-- CREATE INDEX idx_repartidores_fifo_queue ON repartidores (available_since) 
+-- WHERE is_available = TRUE;
 
 -- -- ------------------------------------------------------------------
 -- -- 4. LOGÍSTICA (Direcciones y Productos)
@@ -304,33 +318,28 @@ CREATE INDEX idx_repartidores_disponibilidad ON repartidores(is_available);
 --     direccion_destino_id INT NOT NULL REFERENCES direcciones(id), 
 --     tipo_servicio_id INT REFERENCES tipos_servicios(id),
 --     tipo_vehiculo_id INT REFERENCES tipos_vehiculos(id),
---     nro_recibo TEXT, -- Referencia manual o informativa
+--     nro_recibo TEXT,
 --     fecha_pedido TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
---     estado VARCHAR(20) DEFAULT 'pendiente' CHECK (estado IN ('pendiente', 'en_camino', 'entregado', 'cancelado')),
---     total DECIMAL(10, 2) NOT NULL, -- Total en VES
+--     estado VARCHAR(20) DEFAULT 'pendiente' CHECK (estado IN ('pendiente', 'asignado', 'en_camino', 'entregado', 'cancelado')),
+--     total DECIMAL(10, 2) NOT NULL,
 --     total_dolar DECIMAL(10, 2) DEFAULT 0,
 --     municipio_origen VARCHAR(100),
 --     municipio_destino VARCHAR(100),
---     pago_confirmado BOOLEAN DEFAULT FALSE -- Flag rápido para despacho
+--     pago_confirmado BOOLEAN DEFAULT FALSE,
+--     repartidor_id INT REFERENCES usuarios(id)
 -- );
 
 -- CREATE TABLE payments (
 --     id SERIAL PRIMARY KEY,
 --     pedido_id INT REFERENCES pedidos(id) ON DELETE CASCADE,
 --     cliente_id INT REFERENCES usuarios(id),
-    
---     -- Datos para validación Bancaria (Mercantil)
 --     metodo_pago VARCHAR(50) DEFAULT 'pago_movil_mercantil',
 --     referencia_bancaria VARCHAR(20) NOT NULL,
 --     telefono_pagador VARCHAR(20) NOT NULL,
-    
---     -- Valores económicos históricos
 --     monto_ves DECIMAL(12, 2) NOT NULL,
 --     tasa_aplicada DECIMAL(12, 4) NOT NULL,
-    
---     -- Respuesta del API
 --     estado_pago VARCHAR(20) DEFAULT 'pendiente' CHECK (estado_pago IN ('pendiente', 'completado', 'fallido')),
---     bank_tx_id VARCHAR(100), -- ID retornado por el banco
+--     bank_tx_id VARCHAR(100),
 --     mensaje_respuesta_banco TEXT,
 --     fecha_pago TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 -- );
@@ -351,7 +360,8 @@ CREATE INDEX idx_repartidores_disponibilidad ON repartidores(is_available);
 --     id SERIAL PRIMARY KEY,
 --     repartidor_id INT REFERENCES usuarios(id) ON DELETE CASCADE,
 --     pedido_id INT REFERENCES pedidos(id) ON DELETE CASCADE,
---     fecha_asignacion TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+--     fecha_asignacion TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+--     fecha_entrega TIMESTAMPTZ -- Para medir tiempos de respuesta
 -- );
 
 -- -- ------------------------------------------------------------------
@@ -388,7 +398,7 @@ CREATE INDEX idx_repartidores_disponibilidad ON repartidores(is_available);
 -- SELECT 'Administrador Global', 'ramongonzalez101@gmail.com', '999999', 'administrador', crypt('admin1234', gen_salt('bf'))
 -- WHERE NOT EXISTS (SELECT 1 FROM usuarios WHERE email = 'ramongonzalez101@gmail.com');
 
--- -- Índices sugeridos para velocidad en búsquedas frecuentes
+-- -- Índices adicionales para optimización
 -- CREATE INDEX idx_pedidos_cliente ON pedidos(cliente_id);
 -- CREATE INDEX idx_payments_ref ON payments(referencia_bancaria);
-
+-- CREATE INDEX idx_repartidores_disponibilidad ON repartidores(is_available);
