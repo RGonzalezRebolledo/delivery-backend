@@ -11,7 +11,7 @@ export const assignPendingOrders = async (io) => {
     try {
         await client.query('BEGIN');
 
-        // Buscamos el pedido pendiente más antiguo
+        // 1. Buscamos el pedido pendiente más antiguo
         const pendingQuery = `
             SELECT p.id, p.total_dolar as monto, u.nombre as cliente_nombre,
                    dir_o.calle as recogida, dir_d.calle as entrega
@@ -32,7 +32,7 @@ export const assignPendingOrders = async (io) => {
 
         const pedido = orderRes.rows[0];
 
-        // Buscamos al repartidor disponible
+        // 2. Buscamos al repartidor disponible
         const driverQuery = `
             SELECT usuario_id FROM repartidores 
             WHERE is_available = true AND is_active = 'activo'
@@ -48,7 +48,7 @@ export const assignPendingOrders = async (io) => {
 
         const driverId = driverRes.rows[0].usuario_id;
 
-        // Actualización de DB
+        // 3. Actualización de DB (Transacción)
         await client.query(
             "UPDATE pedidos SET repartidor_id = $1, estado = 'asignado' WHERE id = $2",
             [driverId, pedido.id]
@@ -61,32 +61,42 @@ export const assignPendingOrders = async (io) => {
 
         await client.query('COMMIT');
 
-        // --- NOTIFICACIÓN ---
+        // --- 4. LÓGICA DE NOTIFICACIÓN ROBUSTA ---
         const targetRoom = `driver_${driverId}`;
         
-        // Verificamos si hay alguien en la sala
+        // Verificamos quién está conectado físicamente en este instante
         const socketsInRoom = await io.in(targetRoom).fetchSockets();
-        console.log(`📡 Notificando a sala: ${targetRoom} | Sockets: ${socketsInRoom.length}`);
+        
+        console.log("--------------------------------------------------");
+        console.log(`📡 INTENTO DE NOTIFICACIÓN`);
+        console.log(`📍 Sala: ${targetRoom}`);
+        console.log(`👥 Sockets activos detectados: ${socketsInRoom.length}`);
 
-        io.to(targetRoom).emit('NUEVO_PEDIDO', {
-            pedido_id: pedido.id,
-            monto: pedido.monto,
-            cliente_nombre: pedido.cliente_nombre,
-            recogida: pedido.recogida,
-            entrega: pedido.entrega,
-            estado: 'asignado'
-        });
-
-        console.log(`✅ Pedido ${pedido.id} enviado al conductor ${driverId}`);
+        if (socketsInRoom.length > 0) {
+            io.to(targetRoom).emit('NUEVO_PEDIDO', {
+                pedido_id: pedido.id,
+                monto: pedido.monto,
+                cliente_nombre: pedido.cliente_nombre,
+                recogida: pedido.recogida,
+                entrega: pedido.entrega,
+                estado: 'asignado'
+            });
+            console.log(`✅ EXITO: Pedido ${pedido.id} enviado al conductor ${driverId}`);
+        } else {
+            // Si esto sale en el log, el problema es 100% el Socket del Frontend que se cerró
+            console.error(`❌ FALLO DE ENVÍO: La sala ${targetRoom} está VACÍA.`);
+            console.error(`💡 El conductor ${driverId} se puso disponible en DB pero el Socket se desconectó antes de recibir el mensaje.`);
+        }
+        console.log("--------------------------------------------------");
 
     } catch (error) {
         await client.query('ROLLBACK');
-        console.error("❌ Error en asignación:", error);
+        console.error("❌ Error Crítico en asignación:", error);
     } finally {
+        // Liberar el cliente al pool
         client.release();
     }
 };
-
 // import { pool } from '../db.js';
 
 // export const assignPendingOrders = async (io) => {

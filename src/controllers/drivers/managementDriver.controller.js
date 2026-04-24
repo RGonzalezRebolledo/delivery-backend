@@ -41,10 +41,11 @@ export const toggleAvailability = async (req, res) => {
         if (isNowAvailable && currentStatus !== 'suspendido') {
             console.log(`👷 Conductor ${userId} disponible. Buscando pedidos...`);
             
+            // Aumentamos a 1.5 segundos para dar tiempo a que el Socket 
+            // se estabilice en el canal antes de enviar datos pesados
             setTimeout(() => {
-                console.log("¿Existe la instancia de IO?:", !!io); // Si sale false, aquí está el problema
                 assignPendingOrders(io);
-            }, 500); 
+            }, 1500); 
         }
 
         res.json({
