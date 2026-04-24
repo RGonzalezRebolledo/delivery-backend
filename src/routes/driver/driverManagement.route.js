@@ -20,6 +20,6 @@ routerDriverManagement.get("/driver/current-order", getCurrentOrder);
 
 // Ruta para finalizar la entrega
 routerDriverManagement.post("/driver/complete-order", completeOrder);
-routerDriverManagement.patch("/driver/order-status", completeOrder);
+routerDriverManagement.patch("/driver/order-status", updateOrderStatus);
 
 export default routerDriverManagement;
