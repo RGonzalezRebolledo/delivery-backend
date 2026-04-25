@@ -1,31 +1,13 @@
 import { pool } from '../../db.js';
+
 import { assignPendingOrders } from '../../services/assignmentServices.js'; 
 
-// 1. ACTIVAR/DESACTIVAR DISPONIBILIDAD
 export const toggleAvailability = async (req, res) => {
     const { available } = req.body;
     const userId = req.userId;
     const io = req.app.get('socketio'); 
 
     try {
-        const checkStatus = await pool.query(
-            "SELECT is_active FROM repartidores WHERE usuario_id = $1",
-            [userId]
-        );
-
-        if (checkStatus.rows.length === 0) {
-            return res.status(404).json({ error: 'Perfil de repartidor no encontrado' });
-        }
-
-        const currentStatus = checkStatus.rows[0].is_active;
-
-        if (currentStatus === 'suspendido' && available === true) {
-            return res.status(403).json({ 
-                success: false, 
-                message: 'Tu cuenta está suspendida. No puedes ponerte en línea.' 
-            });
-        }
-
         const query = `
             UPDATE repartidores 
             SET is_available = $1, 
@@ -34,40 +16,18 @@ export const toggleAvailability = async (req, res) => {
             RETURNING is_available;
         `;
         const result = await pool.query(query, [available, userId]);
-        const isNowAvailable = result.rows[0].is_available;
+        if (result.rows[0].is_available && io) assignPendingOrders(io);
 
-        if (isNowAvailable && currentStatus !== 'suspendido') {
-            setTimeout(() => {
-                if (io) assignPendingOrders(io);
-            }, 1500); 
-        }
-
-        res.json({
-            success: true,
-            isAvailable: isNowAvailable,
-            message: isNowAvailable ? 'Conectado' : 'Desconectado'
-        });
-
+        res.json({ success: true, isAvailable: result.rows[0].is_available });
     } catch (error) {
-        console.error("❌ Error en toggleAvailability:", error.message);
-        res.status(500).json({ success: false, error: 'Error de servidor' });
+        res.status(500).json({ success: false, error: error.message });
     }
 };
 
-// 2. OBTENER PEDIDO ACTUAL (Fuente de verdad al refrescar)
 export const getCurrentOrder = async (req, res) => {
     const userId = req.userId; 
-
     try {
-        const driverResult = await pool.query(
-            `SELECT is_available, is_active FROM repartidores WHERE usuario_id = $1`, 
-            [userId]
-        );
-
-        if (driverResult.rows.length === 0) {
-            return res.status(404).json({ error: 'Repartidor no encontrado' });
-        }
-
+        const driverResult = await pool.query(`SELECT is_available, is_active FROM repartidores WHERE usuario_id = $1`, [userId]);
         const orderQuery = `
             SELECT p.id as pedido_id, p.total_dolar as monto, p.estado,
                    u_c.nombre as cliente_nombre,
@@ -76,83 +36,61 @@ export const getCurrentOrder = async (req, res) => {
             JOIN usuarios u_c ON p.cliente_id = u_c.id
             JOIN direcciones dir_o ON p.direccion_origen_id = dir_o.id
             JOIN direcciones dir_d ON p.direccion_destino_id = dir_d.id
-            WHERE p.repartidor_id = $1 
-              AND p.estado IN ('asignado', 'en_camino')
+            WHERE p.repartidor_id = $1 AND p.estado IN ('asignado', 'en_camino')
             LIMIT 1;
         `;
-
         const orderResult = await pool.query(orderQuery, [userId]);
-        const hasActiveOrder = orderResult.rows.length > 0;
-        
         res.json({
-            active: hasActiveOrder,
-            order: hasActiveOrder ? orderResult.rows[0] : null,
-            isAvailableInDB: driverResult.rows[0].is_available,
-            status: driverResult.rows[0].is_active 
+            active: orderResult.rows.length > 0,
+            order: orderResult.rows[0] || null,
+            isAvailableInDB: driverResult.rows[0]?.is_available,
+            status: driverResult.rows[0]?.is_active 
         });
-
     } catch (error) {
-        console.error("❌ Error en getCurrentOrder:", error);
-        res.status(500).json({ error: 'Error interno' });
+        res.status(500).json({ error: error.message });
     }
 };
 
-// 3. ACTUALIZAR ESTADO (Aceptar/Rechazar/Entregar)
+// ✅ ESTA ES LA FUNCIÓN QUE FALTABA Y CAUSABA EL ERROR
+export const completeOrder = async (req, res) => {
+    const { pedidoId } = req.body;
+    const userId = req.userId;
+    try {
+        await pool.query("UPDATE pedidos SET estado = 'entregado', fecha_entrega = NOW() WHERE id = $1 AND repartidor_id = $2", [pedidoId, userId]);
+        await pool.query("UPDATE repartidores SET is_available = true WHERE usuario_id = $1", [userId]);
+        res.json({ success: true, message: 'Pedido entregado' });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
 export const updateOrderStatus = async (req, res) => {
     const { pedido_id, status } = req.body;
     const driverId = req.userId; 
     const io = req.app.get('socketio'); 
-    const client = await pool.connect();
 
     try {
-        await client.query("BEGIN");
-
-        const pedidoResult = await client.query(
-            "SELECT cliente_id FROM pedidos WHERE id = $1", [pedido_id]
-        );
-
-        if (pedidoResult.rows.length === 0) throw new Error("Pedido no encontrado");
+        const pedidoResult = await pool.query("SELECT cliente_id FROM pedidos WHERE id = $1", [pedido_id]);
         const cliente_id = pedidoResult.rows[0].cliente_id;
 
         if (status === 'pendiente') {
-            // Rechazo: El pedido vuelve a estar disponible para otros
-            await client.query(`UPDATE pedidos SET estado = 'pendiente' WHERE id = $1`, [pedido_id]);
-            await client.query(
-                `UPDATE repartidores SET is_available = true, available_since = NOW() WHERE usuario_id = $1`,
-                [driverId]
-            );
-        } else if (status === 'en_camino') {
-            await client.query(`UPDATE pedidos SET estado = 'en_camino' WHERE id = $1`, [pedido_id]);
-        } else if (status === 'entregado') {
-            await client.query(`UPDATE pedidos SET estado = 'entregado', fecha_entrega = NOW() WHERE id = $1`, [pedido_id]);
-            await client.query(
-                `UPDATE repartidores SET is_available = true, available_since = NOW() WHERE usuario_id = $1`,
-                [driverId]
-            );
+            await pool.query(`UPDATE pedidos SET estado = 'pendiente' WHERE id = $1`, [pedido_id]);
+            await pool.query(`UPDATE repartidores SET is_available = true WHERE usuario_id = $1`, [driverId]);
+        } else {
+            await pool.query(`UPDATE pedidos SET estado = $1 WHERE id = $2`, [status, pedido_id]);
         }
 
-        await client.query("COMMIT");
-
-        // Notificar al Cliente por Socket
         if (io) {
             io.to(cliente_id.toString()).emit('ORDEN_ACTUALIZADA', {
                 pedido_id: parseInt(pedido_id),
                 nuevo_estado: status
             });
-            
-            // Si fue rechazo, intentar reasignar de inmediato excluyendo al que rechazó
-            if (status === 'pendiente') {
-                assignPendingOrders(io, driverId);
-            }
+            if (status === 'pendiente') assignPendingOrders(io, driverId);
         }
 
-        res.json({ success: true, message: `Estado: ${status}` });
-
+        res.json({ success: true });
     } catch (error) {
-        if (client) await client.query("ROLLBACK");
         res.status(500).json({ success: false, error: error.message });
-    } finally {
-        client.release();
     }
 };
 
