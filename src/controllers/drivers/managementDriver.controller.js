@@ -146,27 +146,35 @@ export const completeOrder = async (req, res) => {
     }
 };
 
-
 export const updateOrderStatus = async (req, res) => {
     const { pedido_id, status } = req.body;
     const driverId = req.userId; // Obtenido del middleware de auth
+    const io = req.app.get('socketio'); // Obtenemos la instancia de socket.io desde la app
 
     const client = await pool.connect();
 
     try {
         await client.query("BEGIN");
 
+        // 0. Obtener el cliente_id antes de actualizar para saber a quién notificar
+        const pedidoResult = await client.query(
+            "SELECT cliente_id FROM pedidos WHERE id = $1",
+            [pedido_id]
+        );
+
+        if (pedidoResult.rows.length === 0) {
+            throw new Error("Pedido no encontrado");
+        }
+
+        const cliente_id = pedidoResult.rows[0].cliente_id;
+
         if (status === 'pendiente') {
             // --- EL CONDUCTOR RECHAZÓ O SE LE ACABÓ EL TIEMPO ---
-            
-            // 1. Desvincular el pedido y ponerlo en pendiente
             await client.query(
                 `UPDATE pedidos SET repartidor_id = NULL, estado = 'pendiente' WHERE id = $1`,
                 [pedido_id]
             );
 
-            // 2. Mandar al conductor al final de la cola
-            // Al actualizar 'available_since' a NOW(), el ORDER BY ASC lo pondrá de último
             await client.query(
                 `UPDATE repartidores 
                  SET is_available = true, available_since = NOW() 
@@ -180,7 +188,6 @@ export const updateOrderStatus = async (req, res) => {
                 `UPDATE pedidos SET estado = 'en_camino' WHERE id = $1`,
                 [pedido_id]
             );
-            // El repartidor sigue con is_available = false porque está ocupado
 
         } else if (status === 'entregado') {
             // --- EL CONDUCTOR FINALIZÓ EL SERVICIO ---
@@ -189,7 +196,6 @@ export const updateOrderStatus = async (req, res) => {
                 [pedido_id]
             );
 
-            // Volver a poner al conductor en la cola (al final)
             await client.query(
                 `UPDATE repartidores 
                  SET is_available = true, available_since = NOW() 
@@ -199,15 +205,96 @@ export const updateOrderStatus = async (req, res) => {
         }
 
         await client.query("COMMIT");
-        res.json({ success: true, message: `Estado actualizado a ${status}` });
+
+        // --- NOTIFICACIÓN POR SOCKET ---
+        // Emitimos a la sala privada del cliente el nuevo estado
+        if (io) {
+            io.to(cliente_id.toString()).emit('ORDEN_ACTUALIZADA', {
+                pedido_id: pedido_id,
+                nuevo_estado: status
+            });
+        }
+
+        res.json({ 
+            success: true, 
+            message: `Estado actualizado a ${status}`,
+            cliente_notificado: cliente_id 
+        });
 
     } catch (error) {
         await client.query("ROLLBACK");
+        console.error("ERROR EN updateOrderStatus:", error.message);
         res.status(500).json({ success: false, error: error.message });
     } finally {
         client.release();
     }
 };
+
+
+
+// export const updateOrderStatus = async (req, res) => {
+//     const { pedido_id, status } = req.body;
+//     const driverId = req.userId; // Obtenido del middleware de auth
+
+//     const client = await pool.connect();
+
+//     try {
+//         await client.query("BEGIN");
+
+//         if (status === 'pendiente') {
+//             // --- EL CONDUCTOR RECHAZÓ O SE LE ACABÓ EL TIEMPO ---
+            
+//             // 1. Desvincular el pedido y ponerlo en pendiente
+//             await client.query(
+//                 `UPDATE pedidos SET repartidor_id = NULL, estado = 'pendiente' WHERE id = $1`,
+//                 [pedido_id]
+//             );
+
+//             // 2. Mandar al conductor al final de la cola
+//             // Al actualizar 'available_since' a NOW(), el ORDER BY ASC lo pondrá de último
+//             await client.query(
+//                 `UPDATE repartidores 
+//                  SET is_available = true, available_since = NOW() 
+//                  WHERE usuario_id = $1`,
+//                 [driverId]
+//             );
+
+//         } else if (status === 'en_camino') {
+//             // --- EL CONDUCTOR ACEPTÓ EL PEDIDO ---
+//             await client.query(
+//                 `UPDATE pedidos SET estado = 'en_camino' WHERE id = $1`,
+//                 [pedido_id]
+//             );
+//             // El repartidor sigue con is_available = false porque está ocupado
+
+//         } else if (status === 'entregado') {
+//             // --- EL CONDUCTOR FINALIZÓ EL SERVICIO ---
+//             await client.query(
+//                 `UPDATE pedidos SET estado = 'entregado', fecha_entrega = NOW() WHERE id = $1`,
+//                 [pedido_id]
+//             );
+
+//             // Volver a poner al conductor en la cola (al final)
+//             await client.query(
+//                 `UPDATE repartidores 
+//                  SET is_available = true, available_since = NOW() 
+//                  WHERE usuario_id = $1`,
+//                 [driverId]
+//             );
+//         }
+
+//         await client.query("COMMIT");
+//         res.json({ success: true, message: `Estado actualizado a ${status}` });
+
+//     } catch (error) {
+//         await client.query("ROLLBACK");
+//         res.status(500).json({ success: false, error: error.message });
+//     } finally {
+//         client.release();
+//     }
+// };
+
+
 // import { pool } from '../../db.js';
 // import { assignPendingOrders } from '../../services/assignmentServices.js'; // Asegúrate de que la ruta sea correcta
 
