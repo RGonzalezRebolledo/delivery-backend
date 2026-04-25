@@ -10,7 +10,8 @@ import cron from 'node-cron';
 import { pool } from './db.js';
 import { runBcvScraper } from './services/scraperService.js';
 // IMPORTANTE: Asegúrate de que la ruta a tu servicio de asignación sea correcta
-import { assignPendingOrders } from './services/assignmentService.js'; 
+// import { assignPendingOrders } from './services/assignmentService.js'; 
+import { assignPendingOrders } from './services/assignmentServices.js';
 
 const app = express();
 const httpServer = createServer(app);
