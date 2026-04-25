@@ -113,12 +113,13 @@ CREATE TABLE pedidos (
     tipo_vehiculo_id INT REFERENCES tipos_vehiculos(id),
     nro_recibo TEXT,
     fecha_pedido TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    estado VARCHAR(20) DEFAULT 'pendiente' CHECK (estado IN ('pendiente', 'asignado', 'en_camino', 'entregado', 'cancelado')),
+    estado VARCHAR(20) DEFAULT 'pendiente' CHECK (estado IN ('pendiente', 'asignado', 'en_camino', 'entregado', 'finalizado')),
     total DECIMAL(10, 2) NOT NULL,
     total_dolar DECIMAL(10, 2) DEFAULT 0,
     municipio_origen VARCHAR(100),
     municipio_destino VARCHAR(100),
     pago_confirmado BOOLEAN DEFAULT FALSE,
+    fecha_entrega TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     -- CORRECCIÓN: Apunta a usuarios(id) para que coincida con el socket.id del Frontend
     repartidor_id INT REFERENCES usuarios(id) 
 );

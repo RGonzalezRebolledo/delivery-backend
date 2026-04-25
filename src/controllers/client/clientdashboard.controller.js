@@ -1,5 +1,6 @@
 import { pool } from '../../db.js';
 
+// En tu archivo de controlador:
 export const getClientOrders = async (req, res) => {
     const clienteId = req.userId; 
 
@@ -13,15 +14,13 @@ export const getClientOrders = async (req, res) => {
                 p.estado,
                 p.total,
                 p.total_dolar,
-                p.nro_recibo,
-                d.calle,
-                d.ciudad,
+                d1.calle AS calle_destino, -- Alias para destino
+                d2.calle AS calle_origen,  -- NUEVO: Alias para origen
                 tv.descript AS vehiculo_descript,
-                tv.amount_pay AS vehiculo_costo, -- Ajustado a 'amount_pay'
-                ts.descript AS servicio_descript,
-                ts.amount_pay AS servicio_costo   -- Ajustado a 'amount_pay'
+                ts.descript AS servicio_descript
              FROM pedidos p
-             LEFT JOIN direcciones d ON p.direccion_destino_id = d.id
+             LEFT JOIN direcciones d1 ON p.direccion_destino_id = d1.id -- Destino
+             LEFT JOIN direcciones d2 ON p.direccion_origen_id = d2.id  -- NUEVO: Join para Origen
              LEFT JOIN tipos_vehiculos tv ON p.tipo_vehiculo_id = tv.id
              LEFT JOIN tipos_servicios ts ON p.tipo_servicio_id = ts.id
              WHERE p.cliente_id = $1
@@ -29,50 +28,24 @@ export const getClientOrders = async (req, res) => {
             [clienteId]
         );
 
-        // const orders = result.rows.map(order => ({
-        //     id: order.id,
-        //     date: new Date(order.fecha_pedido).toLocaleDateString('es-ES', { 
-        //         day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' 
-        //     }),
-        //     status: order.estado,
-        //     total: parseFloat(order.total).toFixed(2),
-        //     total_usd: parseFloat(order.total_dolar).toFixed(2),
-        //     address: order.calle ? `${order.calle}` : 'Dirección no disponible',
-        //     receipt: order.nro_recibo,
-        //     typevehicle: order.vehiculo_descript || 'No especificado',
-        //     typeservice: order.servicio_descript || 'Estándar',
-        //     // Desglose con el campo amount_pay
-        //     breakdown: {
-        //         vehicle_base: parseFloat(order.vehiculo_costo || 0).toFixed(2),
-        //         service_extra: parseFloat(order.servicio_costo || 0).toFixed(2)
-        //     }
-        // }));
-
         const orders = result.rows.map(order => ({
             id: order.id,
-            // CAMBIO AQUÍ: Envía el valor original de la DB (Postgres/Node lo enviará como ISO string)
             fecha_pedido: order.fecha_pedido, 
             status: order.estado,
             total: parseFloat(order.total).toFixed(2),
             total_usd: parseFloat(order.total_dolar).toFixed(2),
-            address: order.calle ? `${order.calle}` : 'Dirección no disponible',
-            receipt: order.nro_recibo,
+            address_dest: order.calle_destino || 'No especificada', // Cambio de nombre
+            address_origin: order.calle_origen || 'No especificada', // NUEVO campo
             typevehicle: order.vehiculo_descript || 'No especificado',
-            typeservice: order.servicio_descript || 'Estándar',
-            breakdown: {
-                vehicle_base: parseFloat(order.vehiculo_costo || 0).toFixed(2),
-                service_extra: parseFloat(order.servicio_costo || 0).toFixed(2)
-            }
+            typeservice: order.servicio_descript || 'Estándar'
         }));
 
         res.status(200).json(orders);
-
     } catch (error) {
         console.error("ERROR SQL:", error.message);
         res.status(500).json({ error: 'Error interno del servidor' });
     }
 };
-
 
 
 
