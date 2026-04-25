@@ -8,8 +8,6 @@ import cookieParser from 'cookie-parser';
 import cron from 'node-cron';
 import { pool } from './db.js';
 import { runBcvScraper } from './services/scraperService.js';
-
-// ✅ Asegúrate de que el nombre del archivo sea exacto (assignmentServices.js)
 import { assignPendingOrders } from './services/assignmentServices.js';
 
 const app = express();
@@ -49,7 +47,6 @@ const io = new Server(httpServer, {
     allowEIO3: true
 });
 
-// Guardar instancia para usar en controladores mediante req.app.get('socketio')
 app.set('socketio', io);
 
 // --- GESTIÓN DE EVENTOS SOCKET.IO ---
@@ -60,9 +57,7 @@ io.on('connection', (socket) => {
     socket.on('join_driver_room', (usuario_id) => {
         if (usuario_id) {
             const room = `driver_${usuario_id}`;
-            
-            // Guardamos el ID en el objeto socket para referencia
-            socket.userId = usuario_id;
+            socket.userId = usuario_id; // Guardamos el ID para usarlo en disconnect
 
             const currentRooms = Array.from(socket.rooms);
             currentRooms.forEach(r => { 
@@ -73,38 +68,49 @@ io.on('connection', (socket) => {
             console.log(`✅ Repartidor ${usuario_id} conectado en sala: ${room}`);
             socket.emit('room_joined', room); 
             
-            // Al conectarse un repartidor, buscamos pedidos inmediatamente
             assignPendingOrders(io);
         }
     });
 
-    // Unirse a sala de Cliente para seguimiento
+    // Unirse a sala de Cliente
     socket.on('join_client_room', (usuario_id) => {
         if (usuario_id) {
             const room = usuario_id.toString();
-            const currentRooms = Array.from(socket.rooms);
-            currentRooms.forEach(r => { 
-                if(r !== socket.id) socket.leave(r); 
-            });
-
             socket.join(room);
             console.log(`👤 Cliente ${usuario_id} unido a canal de seguimiento: ${room}`);
             socket.emit('client_room_joined', room);
         }
     });
 
-    socket.on('disconnect', (reason) => {
+    // ⚡️ ACTUALIZACIÓN: Liberación automática por desconexión
+    socket.on('disconnect', async (reason) => {
         console.log(`❌ Conexión cerrada (${socket.id}):`, reason);
-        // El Heartbeat de 30s se encargará de detectar si este usuario tenía un pedido
+        
+        if (socket.userId) {
+            try {
+                // Si el conductor se desconecta y tiene un pedido 'asignado' (no aceptado), lo liberamos
+                const res = await pool.query(
+                    `UPDATE pedidos 
+                     SET estado = 'pendiente' 
+                     WHERE repartidor_id = $1 AND estado = 'asignado' 
+                     RETURNING id`,
+                    [socket.userId]
+                );
+
+                if (res.rowCount > 0) {
+                    console.log(`📦 Pedido #${res.rows[0].id} liberado por pérdida de conexión del driver ${socket.userId}`);
+                    assignPendingOrders(io, socket.userId);
+                }
+            } catch (err) {
+                console.error("Error en desconexión involuntaria:", err.message);
+            }
+        }
     });
 });
 
-// --- REASIGNACIÓN AUTOMÁTICA (HEARTBEAT) ---
-// Cada 30 segundos, el sistema barre la DB buscando pedidos 'pendientes'
+// --- REASIGNACIÓN AUTOMÁTICA ---
 setInterval(() => {
-    if (io) {
-        assignPendingOrders(io);
-    }
+    if (io) assignPendingOrders(io);
 }, 30000); 
 
 // --- LÓGICA CRON BCV ---
@@ -182,6 +188,192 @@ httpServer.listen(PORT, '0.0.0.0', async () => {
     }
     console.log("--------------------------");
 });
+
+
+// import 'dotenv/config';
+// import express from 'express';
+// import { createServer } from 'http'; 
+// import { Server } from 'socket.io'; 
+// import morgan from 'morgan';
+// import cors from 'cors';
+// import cookieParser from 'cookie-parser';
+// import cron from 'node-cron';
+// import { pool } from './db.js';
+// import { runBcvScraper } from './services/scraperService.js';
+
+// // ✅ Asegúrate de que el nombre del archivo sea exacto (assignmentServices.js)
+// import { assignPendingOrders } from './services/assignmentServices.js';
+
+// const app = express();
+// const httpServer = createServer(app);
+
+// // --- CONFIGURACIÓN DE CORS ---
+// const allowedOrigins = [
+//     'http://localhost:5173',
+//     'http://localhost:5174',
+//     'https://deliveryaplication-ioll.vercel.app'
+// ];
+
+// app.use(cors({
+//     origin: function (origin, callback) {
+//         if (!origin || allowedOrigins.includes(origin)) {
+//             callback(null, true);
+//         } else {
+//             callback(new Error('Bloqueado por CORS'));
+//         }
+//     },
+//     credentials: true,
+//     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+//     allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
+// }));
+
+// // --- CONFIGURACIÓN DE SOCKET.IO ---
+// const io = new Server(httpServer, {
+//     cors: {
+//         origin: allowedOrigins,
+//         methods: ["GET", "POST"],
+//         credentials: true
+//     },
+//     transports: ['polling', 'websocket'],
+//     pingTimeout: 60000,
+//     pingInterval: 25000,
+//     connectTimeout: 45000,
+//     allowEIO3: true
+// });
+
+// // Guardar instancia para usar en controladores mediante req.app.get('socketio')
+// app.set('socketio', io);
+
+// // --- GESTIÓN DE EVENTOS SOCKET.IO ---
+// io.on('connection', (socket) => {
+//     console.log('📱 Dispositivo conectado:', socket.id);
+
+//     // Unirse a sala de Repartidor
+//     socket.on('join_driver_room', (usuario_id) => {
+//         if (usuario_id) {
+//             const room = `driver_${usuario_id}`;
+            
+//             // Guardamos el ID en el objeto socket para referencia
+//             socket.userId = usuario_id;
+
+//             const currentRooms = Array.from(socket.rooms);
+//             currentRooms.forEach(r => { 
+//                 if(r !== socket.id) socket.leave(r); 
+//             });
+
+//             socket.join(room);
+//             console.log(`✅ Repartidor ${usuario_id} conectado en sala: ${room}`);
+//             socket.emit('room_joined', room); 
+            
+//             // Al conectarse un repartidor, buscamos pedidos inmediatamente
+//             assignPendingOrders(io);
+//         }
+//     });
+
+//     // Unirse a sala de Cliente para seguimiento
+//     socket.on('join_client_room', (usuario_id) => {
+//         if (usuario_id) {
+//             const room = usuario_id.toString();
+//             const currentRooms = Array.from(socket.rooms);
+//             currentRooms.forEach(r => { 
+//                 if(r !== socket.id) socket.leave(r); 
+//             });
+
+//             socket.join(room);
+//             console.log(`👤 Cliente ${usuario_id} unido a canal de seguimiento: ${room}`);
+//             socket.emit('client_room_joined', room);
+//         }
+//     });
+
+//     socket.on('disconnect', (reason) => {
+//         console.log(`❌ Conexión cerrada (${socket.id}):`, reason);
+//         // El Heartbeat de 30s se encargará de detectar si este usuario tenía un pedido
+//     });
+// });
+
+// // --- REASIGNACIÓN AUTOMÁTICA (HEARTBEAT) ---
+// // Cada 30 segundos, el sistema barre la DB buscando pedidos 'pendientes'
+// setInterval(() => {
+//     if (io) {
+//         assignPendingOrders(io);
+//     }
+// }, 30000); 
+
+// // --- LÓGICA CRON BCV ---
+// cron.schedule('2 9,16 * * 1-5', async () => {
+//     console.log(`[${new Date().toLocaleString()}] Ejecutando actualización programada BCV...`);
+//     await runBcvScraper();
+// });
+
+// // --- MIDDLEWARES ---
+// app.use(morgan('dev'));
+// app.use(express.json());
+// app.use(express.urlencoded({ extended: false }));
+// app.use(cookieParser());
+
+// // --- IMPORTACIÓN DE RUTAS ---
+// import routerUsers from './routes/users.route.js';
+// import routerLogin from './routes/login.route.js';
+// import routerAuth from './routes/auth.route.js';
+// import routerClientOrders from './routes/client/clientdashboard.route.js';
+// import routerCheckSesion from './routes/checkSesion.route.js';
+// import routerClientNewOrder from './routes/client/clientNewOrder.route.js';
+// import routerExchangeRate from './routes/apis/exchangeRate.route.js';
+// import routerCalculateDeliveryCost from './routes/calculateCost.route.js';
+// import routerClientAddresses from './routes/client/clientaddresses.route.js';
+// import routerLoginAdmin from './routes/administrator/loginAdmin.route.js';
+// import routerVehicles from './routes/administrator/typeVhicle.route.js';
+// import routerServices from './routes/administrator/typeServices.route.js';
+// import routerDriverGetDrivers from './routes/driver/driver.route.js';
+// import routerDriverRegisterModal from './routes/driver/driverRegisterModal.route.js';
+// import routerDriverManagement from './routes/driver/driverManagement.route.js';
+
+// // --- MONTAJE DE RUTAS ---
+// app.use(routerCheckSesion);
+// app.use(routerUsers);
+// app.use(routerLogin);
+// app.use(routerAuth);
+// app.use(routerClientOrders);
+// app.use(routerClientNewOrder);
+// app.use(routerExchangeRate);
+// app.use(routerCalculateDeliveryCost);
+// app.use(routerClientAddresses);
+// app.use(routerLoginAdmin);
+// app.use(routerVehicles);
+// app.use(routerServices);
+// app.use(routerDriverGetDrivers);
+// app.use(routerDriverRegisterModal);
+// app.use(routerDriverManagement);
+
+// // --- MANEJO DE ERRORES GLOBAL ---
+// app.use((err, req, res, next) => {
+//     console.error('🔥 Error detectado:', err.stack);
+//     res.status(err.status || 500).json({
+//         status: "error",
+//         message: err.message || "Error interno del servidor",
+//     });
+// });
+
+// // --- LEVANTAR SERVIDOR ---
+// const PORT = process.env.PORT || 4000;
+
+// httpServer.listen(PORT, '0.0.0.0', async () => {
+//     console.log("--------------------------");
+//     console.log(`🚀 Gazzella Express en puerto ${PORT}`);
+    
+//     try {
+//         const res = await pool.query('SELECT COUNT(*) FROM exchange_rates');
+//         if (parseInt(res.rows[0].count) === 0) {
+//             console.log("ℹ️ Base de tasas vacía, scrapeando...");
+//             await runBcvScraper();
+//         } else {
+//             console.log("✅ Tasas de cambio verificadas.");
+//         }
+//     } catch (e) {
+//         console.error("Error inicializando tasa:", e.message);
+//     }
+//     console.log("--------------------------");
+// });
 
 
 // import 'dotenv/config';
