@@ -1,5 +1,6 @@
 import { pool } from '../db.js';
-export const assignPendingOrders = async (io) => {
+// ✅ AHORA RECIBE excludeId PARA REFORZAR LA EXCLUSIÓN
+export const assignPendingOrders = async (io, excludeId = 0) => {
     if (!io) return;
 
     const client = await pool.connect();
@@ -7,8 +8,7 @@ export const assignPendingOrders = async (io) => {
     try {
         await client.query('BEGIN');
 
-        // 1. Buscamos el pedido pendiente más antiguo. 
-        // Traemos también el repartidor_id previo para saber quién lo rechazó.
+        // 1. Buscamos el pedido pendiente más antiguo.
         const pendingQuery = `
             SELECT p.id, p.total_dolar as monto, u.nombre as cliente_nombre,
                    dir_o.calle as recogida, dir_d.calle as entrega,
@@ -29,11 +29,13 @@ export const assignPendingOrders = async (io) => {
         }
 
         const pedido = orderRes.rows[0];
-        // Si el repartidor_id es NULL (pedido nuevo), usamos 0 para no filtrar a nadie
-        const excludeDriverId = pedido.ultimo_repartidor || 0;
 
-        // 2. Buscamos TODOS los repartidores disponibles.
-        // CRÍTICO: Excluimos al conductor que rechazó este pedido específico (usuario_id != $1)
+        // ✅ DETERMINAR A QUIÉN EXCLUIR:
+        // Priorizamos el excludeId pasado por el controlador, 
+        // si no, usamos el que está en la tabla pedidos.
+        const driverToExclude = excludeId || pedido.ultimo_repartidor || 0;
+
+        // 2. Buscamos repartidores disponibles EXCLUYENDO al que rechazó
         const driversQuery = `
             SELECT usuario_id FROM repartidores 
             WHERE is_available = true 
@@ -42,11 +44,11 @@ export const assignPendingOrders = async (io) => {
             ORDER BY available_since ASC;
         `;
 
-        const driversRes = await client.query(driversQuery, [excludeDriverId]);
+        const driversRes = await client.query(driversQuery, [driverToExclude]);
         
         let selectedDriverId = null;
 
-        // 3. BÚSQUEDA DEL CONDUCTOR CONECTADO (Que no sea el que rechazó)
+        // 3. BÚSQUEDA DEL CONDUCTOR CONECTADO
         for (const driver of driversRes.rows) {
             const targetRoom = `driver_${driver.usuario_id}`;
             const socketsInRoom = await io.in(targetRoom).fetchSockets();
@@ -54,15 +56,12 @@ export const assignPendingOrders = async (io) => {
             if (socketsInRoom.length > 0) {
                 selectedDriverId = driver.usuario_id;
                 break; 
-            } else {
-                console.log(`跳 Saltando conductor ${driver.usuario_id}: Sin conexión activa.`);
             }
         }
 
-        // Si no hay OTROS conductores conectados...
         if (!selectedDriverId) {
             await client.query('COMMIT');
-            console.log(`⏳ Pedido #${pedido.id} en espera: No hay otros repartidores conectados distintos al que rechazó.`);
+            console.log(`⏳ Pedido #${pedido.id}: No hay otros repartidores disponibles (Excluido: ${driverToExclude}).`);
             return;
         }
 
@@ -77,7 +76,6 @@ export const assignPendingOrders = async (io) => {
             [selectedDriverId]
         );
 
-        // Opcional: Registrar el intento en el historial
         await client.query(
             "INSERT INTO repartidores_pedidos (repartidor_id, pedido_id) VALUES ($1, $2)",
             [selectedDriverId, pedido.id]
@@ -96,7 +94,7 @@ export const assignPendingOrders = async (io) => {
             estado: 'asignado'
         });
 
-        console.log(`✅ ÉXITO: Pedido #${pedido.id} reasignado al usuario ${selectedDriverId} (Excluido ID anterior: ${excludeDriverId})`);
+        console.log(`✅ REASIGNADO: Pedido #${pedido.id} al usuario ${selectedDriverId}. (Se evitó al usuario ${driverToExclude})`);
 
     } catch (error) {
         if (client) await client.query('ROLLBACK');
