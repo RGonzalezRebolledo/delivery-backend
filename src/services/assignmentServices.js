@@ -8,73 +8,70 @@ export const assignPendingOrders = async (io, excludeId = 0) => {
     try {
         await client.query('BEGIN');
 
-        // --- ⚡️ PASO 0: LIMPIEZA DE SEGURIDAD (ANTI-BLOQUEO) ---
-        // Liberamos pedidos 'asignados' cuyos conductores ya no están disponibles 
-        // o cuya sesión se cerró, devolviéndolos a 'pendiente'.
+        // 1. LIMPIEZA: Liberamos pedidos que quedaron "en el aire" 
+        // (Asignados a gente que se desconectó o se puso no disponible)
         await client.query(`
             UPDATE pedidos 
-            SET estado = 'pendiente' 
+            SET estado = 'pendiente', repartidor_id = NULL 
             WHERE estado = 'asignado' 
             AND (
-                repartidor_id IN (SELECT usuario_id FROM repartidores WHERE is_available = false)
+                repartidor_id IN (SELECT usuario_id FROM repartidores WHERE is_available = false OR is_active != 'activo')
                 OR repartidor_id = $1
             )
         `, [excludeId]);
 
-        // 1. Buscamos el pedido pendiente más antiguo.
-        const pendingQuery = `
+        // 2. Buscamos el pedido pendiente
+        const orderRes = await client.query(`
             SELECT p.id, p.total_dolar as monto, u.nombre as cliente_nombre,
-                   dir_o.calle as recogida, dir_d.calle as entrega,
-                   p.repartidor_id as ultimo_repartidor
+                   dir_o.calle as recogida, dir_d.calle as entrega
             FROM pedidos p
             JOIN usuarios u ON p.cliente_id = u.id
             JOIN direcciones dir_o ON p.direccion_origen_id = dir_o.id
             JOIN direcciones dir_d ON p.direccion_destino_id = dir_d.id
             WHERE p.estado = 'pendiente'
             ORDER BY p.fecha_pedido ASC
-            LIMIT 1 FOR UPDATE SKIP LOCKED; 
-        `;
+            LIMIT 1 FOR UPDATE SKIP LOCKED;
+        `);
 
-        const orderRes = await client.query(pendingQuery);
         if (orderRes.rows.length === 0) {
             await client.query('COMMIT');
             return;
         }
 
         const pedido = orderRes.rows[0];
-        const driverToExclude = excludeId || pedido.ultimo_repartidor || 0;
 
-        // 2. Buscamos repartidores disponibles 
-        const driversQuery = `
+        // 3. BUSCAMOS REPARTIDORES REALMENTE DISPONIBLES
+        const driversRes = await client.query(`
             SELECT usuario_id FROM repartidores 
             WHERE is_available = true 
               AND is_active = 'activo'
               AND usuario_id != $1
             ORDER BY available_since ASC;
-        `;
-
-        const driversRes = await client.query(driversQuery, [driverToExclude]);
+        `, [excludeId]);
         
         let selectedDriverId = null;
 
-        // 3. BÚSQUEDA DEL CONDUCTOR CONECTADO REAL (Verificación por Socket)
+        // 4. VERIFICACIÓN DE SOCKET (ESTA ES LA CLAVE)
+        // Solo asignamos si el conductor TIENE una sesión de socket activa AHORA
         for (const driver of driversRes.rows) {
             const targetRoom = `driver_${driver.usuario_id}`;
             const socketsInRoom = await io.in(targetRoom).fetchSockets();
 
+            // Si no hay sockets en la sala, el conductor cerró la app/pestaña
             if (socketsInRoom.length > 0) {
                 selectedDriverId = driver.usuario_id;
                 break; 
             }
         }
 
+        // Si no encontramos a nadie con socket activo, cancelamos la asignación actual
         if (!selectedDriverId) {
+            console.log(`⚠️ Pedido #${pedido.id} sigue pendiente: No hay conductores con sesión de socket activa.`);
             await client.query('COMMIT');
-            console.log(`⏳ Pedido #${pedido.id}: Sin conductores con socket activo.`);
             return;
         }
 
-        // 4. ACTUALIZACIONES EN DB
+        // 5. SI PASA LOS FILTROS, ASIGNAMOS
         await client.query(
             "UPDATE pedidos SET repartidor_id = $1, estado = 'asignado' WHERE id = $2",
             [selectedDriverId, pedido.id]
@@ -85,15 +82,9 @@ export const assignPendingOrders = async (io, excludeId = 0) => {
             [selectedDriverId]
         );
 
-        // Registro en histórico (opcional si usas ON CONFLICT)
-        await client.query(
-            "INSERT INTO repartidores_pedidos (repartidor_id, pedido_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-            [selectedDriverId, pedido.id]
-        );
-
         await client.query('COMMIT');
 
-        // 5. NOTIFICACIÓN
+        // 6. NOTIFICACIÓN
         io.to(`driver_${selectedDriverId}`).emit('NUEVO_PEDIDO', {
             pedido_id: pedido.id,
             monto: pedido.monto,
@@ -103,9 +94,11 @@ export const assignPendingOrders = async (io, excludeId = 0) => {
             estado: 'asignado'
         });
 
+        console.log(`✅ Pedido #${pedido.id} asignado con éxito al driver ${selectedDriverId}`);
+
     } catch (error) {
         if (client) await client.query('ROLLBACK');
-        console.error("❌ ERROR en assignPendingOrders:", error.message);
+        console.error("❌ Error en asignación:", error.message);
     } finally {
         client.release();
     }
