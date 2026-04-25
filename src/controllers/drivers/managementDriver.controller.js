@@ -174,10 +174,10 @@ export const updateOrderStatus = async (req, res) => {
                 [driverId]
             );
 
-        } else if (status === 'en camino') {
+        } else if (status === 'en_camino') {
             // --- EL CONDUCTOR ACEPTÓ EL PEDIDO ---
             await client.query(
-                `UPDATE pedidos SET estado = 'en camino' WHERE id = $1`,
+                `UPDATE pedidos SET estado = 'en_camino' WHERE id = $1`,
                 [pedido_id]
             );
             // El repartidor sigue con is_available = false porque está ocupado
