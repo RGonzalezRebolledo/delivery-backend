@@ -8,6 +8,7 @@ export const toggleAvailability = async (req, res) => {
     const io = req.app.get('socketio'); 
 
     try {
+        // 1. Verificar el estado administrativo del repartidor
         const checkStatus = await pool.query(
             "SELECT is_active FROM repartidores WHERE usuario_id = $1",
             [userId]
@@ -19,6 +20,7 @@ export const toggleAvailability = async (req, res) => {
 
         const currentStatus = checkStatus.rows[0].is_active;
 
+        // Bloqueo si el usuario está suspendido
         if (currentStatus === 'suspendido' && available === true) {
             return res.status(403).json({ 
                 success: false, 
@@ -26,6 +28,8 @@ export const toggleAvailability = async (req, res) => {
             });
         }
 
+        // 2. Actualizar disponibilidad en la base de datos
+        // Si se pone disponible (true), grabamos el timestamp para el orden FIFO
         const query = `
             UPDATE repartidores 
             SET is_available = $1, 
@@ -36,18 +40,23 @@ export const toggleAvailability = async (req, res) => {
         const result = await pool.query(query, [available, userId]);
         const isNowAvailable = result.rows[0].is_available;
 
-        // 🚀 MEJORA: Retraso de 500ms para asegurar que el socket del frontend 
-        // haya tenido tiempo de unirse a la sala 'driver_ID' tras el cambio de estado.
+        // 3. LÓGICA DE ASIGNACIÓN AUTOMÁTICA
         if (isNowAvailable && currentStatus !== 'suspendido') {
-            console.log(`👷 Conductor ${userId} disponible. Buscando pedidos...`);
+            console.log(`👷 Conductor ${userId} ahora está EN LÍNEA. Verificando cola de pedidos...`);
             
-            // Aumentamos a 1.5 segundos para dar tiempo a que el Socket 
-            // se estabilice en el canal antes de enviar datos pesados
+            /**
+             * Usamos un setTimeout para dar tiempo a que el cliente (Frontend) 
+             * complete el proceso de conexión al Socket y se una a la sala 'driver_ID'
+             * antes de intentar enviarle una notificación de pedido.
+             */
             setTimeout(() => {
-                assignPendingOrders(io);
+                if (io) {
+                    assignPendingOrders(io);
+                }
             }, 1500); 
         }
 
+        // 4. Respuesta al cliente
         res.json({
             success: true,
             isAvailable: isNowAvailable,
@@ -57,8 +66,11 @@ export const toggleAvailability = async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Error en toggleAvailability:", error);
-        res.status(500).json({ error: 'Error al cambiar disponibilidad' });
+        console.error("❌ Error en toggleAvailability:", error.message);
+        res.status(500).json({ 
+            success: false, 
+            error: 'Error al cambiar disponibilidad del repartidor' 
+        });
     }
 };
 
@@ -149,14 +161,14 @@ export const completeOrder = async (req, res) => {
 export const updateOrderStatus = async (req, res) => {
     const { pedido_id, status } = req.body;
     const driverId = req.userId; // Obtenido del middleware de auth
-    const io = req.app.get('socketio'); // Obtenemos la instancia de socket.io desde la app
+    const io = req.app.get('socketio'); // Instancia de socket.io
 
     const client = await pool.connect();
 
     try {
         await client.query("BEGIN");
 
-        // 0. Obtener el cliente_id antes de actualizar para saber a quién notificar
+        // 0. Obtener el cliente_id antes de actualizar para notificar al usuario correcto
         const pedidoResult = await client.query(
             "SELECT cliente_id FROM pedidos WHERE id = $1",
             [pedido_id]
@@ -170,11 +182,14 @@ export const updateOrderStatus = async (req, res) => {
 
         if (status === 'pendiente') {
             // --- EL CONDUCTOR RECHAZÓ O SE LE ACABÓ EL TIEMPO ---
+            
+            // 1. Limpiamos el repartidor_id y devolvemos el pedido a 'pendiente'
             await client.query(
                 `UPDATE pedidos SET repartidor_id = NULL, estado = 'pendiente' WHERE id = $1`,
                 [pedido_id]
             );
 
+            // 2. Ponemos al conductor que rechazó al final de la cola de disponibilidad
             await client.query(
                 `UPDATE repartidores 
                  SET is_available = true, available_since = NOW() 
@@ -196,6 +211,7 @@ export const updateOrderStatus = async (req, res) => {
                 [pedido_id]
             );
 
+            // Volvemos a poner al conductor disponible al final de la cola
             await client.query(
                 `UPDATE repartidores 
                  SET is_available = true, available_since = NOW() 
@@ -206,13 +222,19 @@ export const updateOrderStatus = async (req, res) => {
 
         await client.query("COMMIT");
 
-        // --- NOTIFICACIÓN POR SOCKET ---
-        // Emitimos a la sala privada del cliente el nuevo estado
+        // --- NOTIFICACIÓN POR SOCKET AL CLIENTE ---
         if (io) {
             io.to(cliente_id.toString()).emit('ORDEN_ACTUALIZADA', {
                 pedido_id: pedido_id,
                 nuevo_estado: status
             });
+        }
+
+        // --- REASIGNACIÓN AUTOMÁTICA ---
+        // Si el pedido quedó en 'pendiente', disparamos la búsqueda de un nuevo conductor inmediatamente
+        if (status === 'pendiente') {
+            console.log(`🔄 Reasignando pedido #${pedido_id} tras rechazo...`);
+            assignPendingOrders(io); // Se ejecuta en segundo plano
         }
 
         res.json({ 
@@ -222,7 +244,7 @@ export const updateOrderStatus = async (req, res) => {
         });
 
     } catch (error) {
-        await client.query("ROLLBACK");
+        if (client) await client.query("ROLLBACK");
         console.error("ERROR EN updateOrderStatus:", error.message);
         res.status(500).json({ success: false, error: error.message });
     } finally {
