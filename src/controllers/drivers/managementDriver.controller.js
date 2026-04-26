@@ -15,9 +15,9 @@ export const toggleAvailability = async (req, res) => {
             RETURNING is_available;
         `;
         const result = await pool.query(query, [available, userId]);
-        if (result.rows[0].is_available && io) assignPendingOrders(io);
+        if (result.rows[0]?.is_available && io) assignPendingOrders(io);
 
-        res.json({ success: true, isAvailable: result.rows[0].is_available });
+        res.json({ success: true, isAvailable: result.rows[0]?.is_available });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
@@ -28,7 +28,6 @@ export const getCurrentOrder = async (req, res) => {
     try {
         const driverResult = await pool.query(`SELECT is_available, is_active FROM repartidores WHERE usuario_id = $1`, [userId]);
         
-        // ⚡️ Optimización: Solo traer pedidos que pertenezcan al driver y estén en estados activos
         const orderQuery = `
             SELECT p.id as pedido_id, p.total_dolar as monto, p.estado,
                    u_c.nombre as cliente_nombre,
@@ -54,32 +53,24 @@ export const getCurrentOrder = async (req, res) => {
     }
 };
 
-// En tu controlador de driver
+// Esta función es la que liberaba al driver, pero el frontend no la llamaba
 export const completeOrder = async (req, res) => {
     const { pedidoId } = req.body;
     const userId = req.userId;
     const io = req.app.get('socketio');
     const client = await pool.connect();
 
-    console.log(`--- INTENTO DE COMPLETAR PEDIDO ---`);
-    console.log(`Driver ID: ${userId} | Pedido ID: ${pedidoId}`);
-
     try {
         await client.query("BEGIN");
 
-        // 1. Forzamos la actualización del pedido sin importar el estado previo
-        // Solo verificamos que el pedido sea de este repartidor
         const orderRes = await client.query(
             `UPDATE pedidos 
              SET estado = 'entregado', fecha_entrega = NOW() 
              WHERE id = $1 AND repartidor_id = $2
-             RETURNING id, estado`, 
+             RETURNING id`, 
             [pedidoId, userId]
         );
 
-        console.log(`Resultado Pedido: ${orderRes.rowCount > 0 ? 'EXITO' : 'FALLO - No encontrado o no es del driver'}`);
-
-        // 2. FORZAMOS la disponibilidad del repartidor
         const driverRes = await client.query(
             `UPDATE repartidores 
              SET is_available = true, available_since = NOW() 
@@ -88,34 +79,30 @@ export const completeOrder = async (req, res) => {
             [userId]
         );
 
-        console.log(`Resultado Disponibilidad Driver: ${driverRes.rowCount > 0 ? 'EXITO' : 'FALLO - No existe el registro en la tabla repartidores'}`);
-
         await client.query("COMMIT");
 
         if (orderRes.rowCount > 0 && driverRes.rowCount > 0) {
-            console.log(`✅ DISPONIBILIDAD ACTIVADA PARA DRIVER ${userId}`);
+            console.log(`✅ Driver ${userId} liberado vía completeOrder`);
             if (io) assignPendingOrders(io);
-            return res.json({ success: true, message: "Ahora estás disponible" });
+            return res.json({ success: true, isAvailable: true });
         } else {
-            throw new Error("No se pudo actualizar una de las tablas");
+            throw new Error("No se pudo actualizar el estado");
         }
-
     } catch (error) {
         await client.query("ROLLBACK");
-        console.error("🔥 ERROR EN COMPLETE_ORDER:", error.message);
         res.status(500).json({ success: false, error: error.message });
     } finally {
         client.release();
     }
 };
 
+// CORRECCIÓN CRÍTICA AQUÍ:
 export const updateOrderStatus = async (req, res) => {
     const { pedido_id, status } = req.body;
     const driverId = req.userId; 
     const io = req.app.get('socketio'); 
 
     try {
-        // 1. Verificar que el pedido existe y obtener el cliente
         const pedidoResult = await pool.query(
             "SELECT cliente_id FROM pedidos WHERE id = $1", 
             [pedido_id]
@@ -128,69 +115,36 @@ export const updateOrderStatus = async (req, res) => {
         const cliente_id = pedidoResult.rows[0].cliente_id;
 
         if (status === 'pendiente') {
-            /**
-             * ⚡️ LÓGICA DE RECHAZO CORREGIDA
-             * El conductor rechaza, pero se mantiene disponible para OTROS pedidos.
-             */
-            
-            // A. Liberamos el pedido: lo devolvemos a la cola general
+            // Lógica de rechazo (Ya estaba bien)
+            await pool.query(`UPDATE pedidos SET estado = 'pendiente', repartidor_id = NULL WHERE id = $1`, [pedido_id]);
+            await pool.query(`UPDATE repartidores SET is_available = true, available_since = NOW() WHERE usuario_id = $1`, [driverId]);
+        } 
+        else if (status === 'entregado') {
+            // 🚨 ESTO ERA LO QUE FALTABA: Liberar al driver cuando el estado es 'entregado'
             await pool.query(
-                `UPDATE pedidos 
-                 SET estado = 'pendiente', 
-                     repartidor_id = NULL 
-                 WHERE id = $1`, 
+                `UPDATE pedidos SET estado = 'entregado', fecha_entrega = NOW() WHERE id = $1`, 
                 [pedido_id]
             );
-            
-            // B. MANTENER AL REPARTIDOR DISPONIBLE
-            // Seteamos is_available = true y reiniciamos available_since para que
-            // el sistema lo ponga al final de la lista de prioridad (FIFO).
             await pool.query(
-                `UPDATE repartidores 
-                 SET is_available = true, 
-                     available_since = NOW() 
-                 WHERE usuario_id = $1`, 
+                `UPDATE repartidores SET is_available = true, available_since = NOW() WHERE usuario_id = $1`, 
                 [driverId]
             );
-
-            // C. Registrar el rechazo (opcional, para que el motor sepa que este ya lo rechazó)
-            await pool.query(
-                `INSERT INTO repartidores_pedidos (pedido_id, repartidor_id, fecha_asignacion)
-                 VALUES ($1, $2, NOW())
-                 ON CONFLICT (pedido_id, repartidor_id) DO NOTHING`,
-                [pedido_id, driverId]
-            );
-
-            console.log(`⚠️ Conductor ${driverId} rechazó pedido #${pedido_id} pero sigue disponible.`);
-
-        } else {
-            /**
-             * ✅ LÓGICA DE CAMBIO DE ESTADO NORMAL
-             */
-            await pool.query(
-                `UPDATE pedidos SET estado = $1 WHERE id = $2`, 
-                [status, pedido_id]
-            );
+            console.log(`✅ Driver ${driverId} liberado tras entrega exitosa.`);
+        } 
+        else {
+            // Otros estados (en_camino)
+            await pool.query(`UPDATE pedidos SET estado = $1 WHERE id = $2`, [status, pedido_id]);
         }
 
-        // 2. Notificaciones y Reasignación
         if (io) {
-            // Notificar al cliente
             io.to(cliente_id.toString()).emit('ORDEN_ACTUALIZADA', {
                 pedido_id: parseInt(pedido_id),
                 nuevo_estado: status
             });
-
-            // Si fue rechazo, buscamos inmediatamente a OTRO conductor para este pedido
-            if (status === 'pendiente') {
-                assignPendingOrders(io);
-            }
+            assignPendingOrders(io);
         }
 
-        res.json({ 
-            success: true, 
-            message: status === 'pendiente' ? "Pedido liberado, sigues en línea para otros pedidos" : "Estado actualizado" 
-        });
+        res.json({ success: true, isAvailable: true });
 
     } catch (error) {
         console.error("🔥 Error en updateOrderStatus:", error.message);
