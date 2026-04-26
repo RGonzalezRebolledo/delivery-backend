@@ -96,7 +96,7 @@ export const completeOrder = async (req, res) => {
     }
 };
 
-// CORRECCIÓN CRÍTICA AQUÍ:
+// updateOrderStatus simplificado para versión estable
 export const updateOrderStatus = async (req, res) => {
     const { pedido_id, status } = req.body;
     const driverId = req.userId; 
@@ -114,13 +114,9 @@ export const updateOrderStatus = async (req, res) => {
 
         const cliente_id = pedidoResult.rows[0].cliente_id;
 
-        if (status === 'pendiente') {
-            // Lógica de rechazo (Ya estaba bien)
-            await pool.query(`UPDATE pedidos SET estado = 'pendiente', repartidor_id = NULL WHERE id = $1`, [pedido_id]);
-            await pool.query(`UPDATE repartidores SET is_available = true, available_since = NOW() WHERE usuario_id = $1`, [driverId]);
-        } 
-        else if (status === 'entregado') {
-            // 🚨 ESTO ERA LO QUE FALTABA: Liberar al driver cuando el estado es 'entregado'
+        // FLUJO ESTABLE:
+        if (status === 'entregado') {
+            // 1. Finalizar pedido y liberar repartidor
             await pool.query(
                 `UPDATE pedidos SET estado = 'entregado', fecha_entrega = NOW() WHERE id = $1`, 
                 [pedido_id]
@@ -129,22 +125,28 @@ export const updateOrderStatus = async (req, res) => {
                 `UPDATE repartidores SET is_available = true, available_since = NOW() WHERE usuario_id = $1`, 
                 [driverId]
             );
-            console.log(`✅ Driver ${driverId} liberado tras entrega exitosa.`);
+            console.log(`✅ Pedido ${pedido_id} entregado. Repartidor ${driverId} libre.`);
         } 
-        else {
-            // Otros estados (en_camino)
-            await pool.query(`UPDATE pedidos SET estado = $1 WHERE id = $2`, [status, pedido_id]);
+        else if (status === 'en_camino') {
+            // 2. Cambiar a en camino (el repartidor ya está ocupado is_available=false desde la asignación)
+            await pool.query(`UPDATE pedidos SET estado = 'en_camino' WHERE id = $1`, [pedido_id]);
+            console.log(`🚚 Pedido ${pedido_id} ahora está en camino.`);
         }
 
+        // Notificar al cliente siempre que haya un cambio
         if (io) {
             io.to(cliente_id.toString()).emit('ORDEN_ACTUALIZADA', {
                 pedido_id: parseInt(pedido_id),
                 nuevo_estado: status
             });
-            assignPendingOrders(io);
+            
+            // Si el driver se liberó, buscar si hay más pedidos pendientes
+            if (status === 'entregado') {
+                assignPendingOrders(io);
+            }
         }
 
-        res.json({ success: true, isAvailable: true });
+        res.json({ success: true, message: `Estado actualizado a ${status}` });
 
     } catch (error) {
         console.error("🔥 Error en updateOrderStatus:", error.message);
