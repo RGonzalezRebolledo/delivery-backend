@@ -78,8 +78,6 @@ export const getCurrentOrder = async (req, res) => {
   }
 };
 
-import { pool } from '../../db.js';
-import { assignPendingOrders } from '../../services/assignmentServices.js';
 
 // ... (getCurrentOrder y toggleAvailability se mantienen igual)
 
