@@ -6,9 +6,8 @@ export const assignPendingOrders = async (io) => {
     const client = await pool.connect();
     
     try {
-        // 1. Buscamos TODOS los pedidos pendientes, no solo uno.
-        // Usamos FOR UPDATE SKIP LOCKED para manejar la concurrencia.
-        const pendingOrdersRes = await client.query(`
+        // 1. Buscamos el pedido pendiente más antiguo (Bloqueo estricto)
+        const orderRes = await client.query(`
             SELECT p.id, p.total_dolar as monto, u.nombre as cliente_nombre,
                    dir_o.calle as recogida, dir_d.calle as entrega
             FROM pedidos p
@@ -17,76 +16,72 @@ export const assignPendingOrders = async (io) => {
             JOIN direcciones dir_d ON p.direccion_destino_id = dir_d.id
             WHERE p.estado = 'pendiente'
             ORDER BY p.fecha_pedido ASC
+            LIMIT 1 
             FOR UPDATE SKIP LOCKED;
         `);
 
-        if (pendingOrdersRes.rows.length === 0) return;
+        if (orderRes.rows.length === 0) return; // No hay nada más que hacer
 
-        console.log(`🔍 Procesando cola de asignación: ${pendingOrdersRes.rows.length} pedido(s) pendiente(s).`);
+        const pedido = orderRes.rows[0];
 
-        // 2. Iteramos sobre cada pedido pendiente para intentar asignarlo
-        for (const pedido of pendingOrdersRes.rows) {
-            
-            await client.query('BEGIN');
+        // 2. Buscamos conductores con disponibilidad y socket activo
+        const driversRes = await client.query(`
+            SELECT usuario_id FROM repartidores 
+            WHERE is_available = true AND is_active = 'activo'
+            ORDER BY available_since ASC;
+        `);
 
-            // 3. Buscamos repartidores que estén REALMENTE disponibles y activos
-            const driversRes = await client.query(`
-                SELECT usuario_id FROM repartidores 
-                WHERE is_available = true 
-                  AND is_active = 'activo'
-                ORDER BY available_since ASC;
-            `);
+        let selectedDriverId = null;
 
-            let selectedDriverId = null;
-
-            // 4. Verificamos conexión por Socket
-            for (const driver of driversRes.rows) {
-                const targetRoom = `driver_${driver.usuario_id}`;
-                const socketsInRoom = await io.in(targetRoom).fetchSockets();
-
-                if (socketsInRoom.length > 0) {
-                    selectedDriverId = driver.usuario_id;
-                    break; 
-                }
-            }
-
-            if (selectedDriverId) {
-                // 5. Asignamos el pedido al conductor encontrado
-                await client.query(
-                    "UPDATE pedidos SET repartidor_id = $1, estado = 'asignado' WHERE id = $2",
-                    [selectedDriverId, pedido.id]
-                );
-
-                // Importante: El conductor ya no estará disponible para el SIGUIENTE pedido en este mismo bucle
-                await client.query(
-                    "UPDATE repartidores SET is_available = false WHERE usuario_id = $1",
-                    [selectedDriverId]
-                );
-
-                await client.query('COMMIT');
-
-                // 6. Notificamos al conductor
-                io.to(`driver_${selectedDriverId}`).emit('NUEVO_PEDIDO', {
-                    pedido_id: pedido.id,
-                    monto: pedido.monto,
-                    cliente_nombre: pedido.cliente_nombre,
-                    recogida: pedido.recogida,
-                    entrega: pedido.entrega,
-                    estado: 'asignado'
-                });
-
-                console.log(`✅ Pedido #${pedido.id} asignado al driver ${selectedDriverId}`);
-            } else {
-                // Si no hay conductores para este pedido, liberamos el bloqueo y pasamos al siguiente (o terminamos)
-                await client.query('ROLLBACK');
-                console.log(`⏳ Pedido #${pedido.id} sigue pendiente: No hay más conductores disponibles.`);
+        for (const driver of driversRes.rows) {
+            const targetRoom = `driver_${driver.usuario_id}`;
+            const socketsInRoom = await io.in(targetRoom).fetchSockets();
+            if (socketsInRoom.length > 0) {
+                selectedDriverId = driver.usuario_id;
+                break; 
             }
         }
 
+        if (selectedDriverId) {
+            await client.query('BEGIN');
+            
+            await client.query(
+                "UPDATE pedidos SET repartidor_id = $1, estado = 'asignado' WHERE id = $2",
+                [selectedDriverId, pedido.id]
+            );
+
+            await client.query(
+                "UPDATE repartidores SET is_available = false WHERE usuario_id = $1",
+                [selectedDriverId]
+            );
+
+            await client.query('COMMIT');
+
+            // Notificación inmediata
+            io.to(`driver_${selectedDriverId}`).emit('NUEVO_PEDIDO', {
+                pedido_id: pedido.id,
+                monto: pedido.monto,
+                cliente_nombre: pedido.cliente_nombre,
+                recogida: pedido.recogida,
+                entrega: pedido.entrega,
+                estado: 'asignado'
+            });
+
+            console.log(`✅ Pedido #${pedido.id} asignado a ${selectedDriverId}`);
+
+            // ⚡️ RECURSIVIDAD: Si asignamos uno con éxito, llamamos a la función otra vez
+            // para ver si hay más pedidos pendientes para otros conductores.
+            client.release(); // Liberamos esta conexión antes de la siguiente llamada
+            return assignPendingOrders(io); 
+        } else {
+            console.log(`⏳ Pedido #${pedido.id} en espera de conductores conectados.`);
+        }
+
     } catch (error) {
-        console.error("❌ Error crítico en la cola de asignación:", error.message);
+        if (client) await client.query('ROLLBACK');
+        console.error("❌ Error en asignación:", error.message);
     } finally {
-        client.release();
+        if (client.release) client.release();
     }
 };
 // ✅ AHORA RECIBE excludeId PARA REFORZAR LA EXCLUSIÓN
