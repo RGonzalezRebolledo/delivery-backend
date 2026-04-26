@@ -15,10 +15,18 @@ export const toggleAvailability = async (req, res) => {
             RETURNING is_available;
         `;
         const result = await pool.query(query, [available, userId]);
-        if (result.rows[0]?.is_available && io) assignPendingOrders(io);
+        
+        // Si el repartidor se pone disponible, ejecutamos la búsqueda de pedidos pendientes
+        if (result.rows[0]?.is_available && io) {
+            assignPendingOrders(io);
+        }
 
-        res.json({ success: true, isAvailable: result.rows[0]?.is_available });
+        res.json({ 
+            success: true, 
+            isAvailable: result.rows[0]?.is_available 
+        });
     } catch (error) {
+        console.error("Error en toggleAvailability:", error.message);
         res.status(500).json({ success: false, error: error.message });
     }
 };
