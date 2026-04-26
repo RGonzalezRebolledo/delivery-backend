@@ -10,6 +10,23 @@ import { pool } from './db.js';
 import { runBcvScraper } from './services/scraperService.js';
 import { assignPendingOrders } from './services/assignmentServices.js';
 
+// --- IMPORTACIÓN DE RUTAS ---
+import routerUsers from './routes/users.route.js';
+import routerLogin from './routes/login.route.js';
+import routerAuth from './routes/auth.route.js';
+import routerClientOrders from './routes/client/clientdashboard.route.js';
+import routerCheckSesion from './routes/checkSesion.route.js';
+import routerClientNewOrder from './routes/client/clientNewOrder.route.js';
+import routerExchangeRate from './routes/apis/exchangeRate.route.js';
+import routerCalculateDeliveryCost from './routes/calculateCost.route.js';
+import routerClientAddresses from './routes/client/clientaddresses.route.js';
+import routerLoginAdmin from './routes/administrator/loginAdmin.route.js';
+import routerVehicles from './routes/administrator/typeVhicle.route.js';
+import routerServices from './routes/administrator/typeServices.route.js';
+import routerDriverGetDrivers from './routes/driver/driver.route.js';
+import routerDriverRegisterModal from './routes/driver/driverRegisterModal.route.js';
+import routerDriverManagement from './routes/driver/driverManagement.route.js';
+
 const app = express();
 const httpServer = createServer(app);
 
@@ -53,80 +70,65 @@ app.set('socketio', io);
 io.on('connection', (socket) => {
     console.log('📱 Dispositivo conectado:', socket.id);
 
-    // Unirse a sala de Repartidor
+    // Unirse a sala de Repartidor (Lógica unificada y corregida)
     socket.on('join_driver_room', (usuario_id) => {
+        if (!usuario_id) return;
+
+        const room = `driver_${usuario_id}`;
+        socket.userId = usuario_id; 
+
+        // Limpiar suscripciones previas para evitar duplicidad de mensajes
+        const currentRooms = Array.from(socket.rooms);
+        currentRooms.forEach(r => { 
+            if(r !== socket.id) socket.leave(r); 
+        });
+
+        socket.join(room);
+        console.log(`✅ Repartidor ${usuario_id} activo en sala: ${room}`);
+        
+        socket.emit('room_joined', room); 
+        
+        // Al conectar o refrescar (F5), verificamos si hay pedidos para este conductor
+        assignPendingOrders(io);
+    });
+
+    // Unirse a sala de Cliente para seguimiento
+    socket.on('join_client_room', (usuario_id) => {
         if (usuario_id) {
-            const room = `driver_${usuario_id}`;
-            socket.userId = usuario_id; // Guardamos el ID para usarlo en disconnect
-
-            const currentRooms = Array.from(socket.rooms);
-            currentRooms.forEach(r => { 
-                if(r !== socket.id) socket.leave(r); 
-            });
-
+            const room = usuario_id.toString();
             socket.join(room);
-            console.log(`✅ Repartidor ${usuario_id} conectado en sala: ${room}`);
-            socket.emit('room_joined', room); 
-            
-            assignPendingOrders(io);
+            console.log(`👤 Cliente ${usuario_id} unido a canal de seguimiento: ${room}`);
+            socket.emit('client_room_joined', room);
         }
     });
 
-    // Unirse a sala de Cliente
-    // socket.on('join_client_room', (usuario_id) => {
-    //     if (usuario_id) {
-    //         const room = usuario_id.toString();
-    //         socket.join(room);
-    //         console.log(`👤 Cliente ${usuario_id} unido a canal de seguimiento: ${room}`);
-    //         socket.emit('client_room_joined', room);
-    //     }
-    // });
-    
-    socket.on('join_driver_room', (usuario_id) => {
-        if (usuario_id) {
-            const room = `driver_${usuario_id}`;
-            socket.userId = usuario_id; 
-
-            // Limpiar salas viejas para evitar duplicados
-            socket.rooms.forEach(r => { 
-                if(r !== socket.id) socket.leave(r); 
-            });
-
-            socket.join(room);
-            console.log(`✅ Repartidor ${usuario_id} activo.`);
-            
-            // ⚡️ IMPORTANTE: Cuando el driver reconecta (F5), 
-            // forzamos una revisión de pedidos pendientes.
-            assignPendingOrders(io);
-        }
-    });
-    // ⚡️ ACTUALIZACIÓN: Liberación automática por desconexión
+    // Gestión de desconexión involuntaria
     socket.on('disconnect', async (reason) => {
         console.log(`❌ Conexión cerrada (${socket.id}):`, reason);
         
         if (socket.userId) {
             try {
-                // Si el conductor se desconecta y tiene un pedido 'asignado' (no aceptado), lo liberamos
+                // Si el conductor se cae y tenía un pedido solo 'asignado' (no aceptado), lo liberamos
                 const res = await pool.query(
                     `UPDATE pedidos 
-                     SET estado = 'pendiente' 
+                     SET estado = 'pendiente', repartidor_id = NULL 
                      WHERE repartidor_id = $1 AND estado = 'asignado' 
                      RETURNING id`,
                     [socket.userId]
                 );
 
                 if (res.rowCount > 0) {
-                    console.log(`📦 Pedido #${res.rows[0].id} liberado por pérdida de conexión del driver ${socket.userId}`);
-                    assignPendingOrders(io, socket.userId);
+                    console.log(`📦 Pedido #${res.rows[0].id} liberado por desconexión del driver ${socket.userId}`);
+                    assignPendingOrders(io);
                 }
             } catch (err) {
-                console.error("Error en desconexión involuntaria:", err.message);
+                console.error("Error en cleanup de desconexión:", err.message);
             }
         }
     });
 });
 
-// --- REASIGNACIÓN AUTOMÁTICA ---
+// --- REASIGNACIÓN AUTOMÁTICA (Background) ---
 setInterval(() => {
     if (io) assignPendingOrders(io);
 }, 30000); 
@@ -142,23 +144,6 @@ app.use(morgan('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
-
-// --- IMPORTACIÓN DE RUTAS ---
-import routerUsers from './routes/users.route.js';
-import routerLogin from './routes/login.route.js';
-import routerAuth from './routes/auth.route.js';
-import routerClientOrders from './routes/client/clientdashboard.route.js';
-import routerCheckSesion from './routes/checkSesion.route.js';
-import routerClientNewOrder from './routes/client/clientNewOrder.route.js';
-import routerExchangeRate from './routes/apis/exchangeRate.route.js';
-import routerCalculateDeliveryCost from './routes/calculateCost.route.js';
-import routerClientAddresses from './routes/client/clientaddresses.route.js';
-import routerLoginAdmin from './routes/administrator/loginAdmin.route.js';
-import routerVehicles from './routes/administrator/typeVhicle.route.js';
-import routerServices from './routes/administrator/typeServices.route.js';
-import routerDriverGetDrivers from './routes/driver/driver.route.js';
-import routerDriverRegisterModal from './routes/driver/driverRegisterModal.route.js';
-import routerDriverManagement from './routes/driver/driverManagement.route.js';
 
 // --- MONTAJE DE RUTAS ---
 app.use(routerCheckSesion);
