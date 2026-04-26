@@ -1,5 +1,4 @@
 import { pool } from "../../db.js";
-// IMPORTANTE: Verifica si assignmentServices.js está realmente en esa ruta
 import { assignPendingOrders } from "../../services/assignmentServices.js";
 
 // 1. Cambiar Disponibilidad (Switch Manual)
@@ -18,6 +17,7 @@ export const toggleAvailability = async (req, res) => {
         `;
     const result = await pool.query(query, [available, userId]);
 
+    // Si se pone disponible, intentamos asignarle algo de la cola inmediatamente
     if (result.rows[0]?.is_available && io) {
       assignPendingOrders(io);
     }
@@ -36,21 +36,18 @@ export const toggleAvailability = async (req, res) => {
 export const getCurrentOrder = async (req, res) => {
   const userId = req.userId;
   try {
-    // Obtenemos datos del repartidor
     const driverRes = await pool.query(
       `SELECT is_available, is_active, tiene_pedido FROM repartidores WHERE usuario_id = $1`,
       [userId]
     );
 
     if (driverRes.rows.length === 0) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Repartidor no encontrado" });
+      return res.status(404).json({ success: false, message: "Repartidor no encontrado" });
     }
 
     const driver = driverRes.rows[0];
 
-    // Obtenemos pedido activo (asignado o en camino)
+    // Buscamos pedido activo
     const orderQuery = `
             SELECT p.id as pedido_id, p.total_dolar as monto, p.estado,
                    u_c.nombre as cliente_nombre,
@@ -69,7 +66,7 @@ export const getCurrentOrder = async (req, res) => {
       active: orderResult.rows.length > 0,
       order: orderResult.rows[0] || null,
       isAvailableInDB: driver.is_available,
-      tiene_pedido: driver.tiene_pedido, // <-- Usamos guion bajo para ser consistentes con la DB
+      tiene_pedido: driver.tiene_pedido, 
       status: driver.is_active,
     });
   } catch (error) {
@@ -78,64 +75,78 @@ export const getCurrentOrder = async (req, res) => {
   }
 };
 
-
-// ... (getCurrentOrder y toggleAvailability se mantienen igual)
-
-// FUNCIÓN QUE BUSCABA TU RUTA
-export const completeOrder = async (req, res) => {
-    const { pedido_id } = req.body;
-    const driverId = req.userId;
-    const io = req.app.get('socketio');
-
-    try {
-        // Marcamos como entregado en la DB
-        await pool.query(
-            `UPDATE pedidos SET estado = 'entregado', fecha_entrega = NOW() WHERE id = $1`, 
-            [pedido_id]
-        );
-        
-        // Liberamos al repartidor: is_available = true y tiene_pedido = false
-        await pool.query(
-            `UPDATE repartidores SET is_available = true, tiene_pedido = false WHERE usuario_id = $1`, 
-            [driverId]
-        );
-
-        if (io) {
-            // Notificamos al sistema para que asigne nuevos pedidos
-            assignPendingOrders(io);
-        }
-
-        res.json({ success: true, message: "Pedido completado exitosamente" });
-    } catch (error) {
-        console.error("Error en completeOrder:", error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-};
-
-// Mantenemos esta también por si el frontend la usa para "En camino"
+// 3. Actualizar Estado del Pedido (Lógica centralizada)
 export const updateOrderStatus = async (req, res) => {
     const { pedido_id, status } = req.body;
     const driverId = req.userId;
     const io = req.app.get('socketio');
 
+    const client = await pool.connect();
+
     try {
-        if (status === 'entregado') {
-            return completeOrder(req, res); // Reutilizamos la lógica de arriba
+        await client.query("BEGIN");
+
+        // 1. Actualizamos el estado del pedido
+        const updateOrderQuery = `UPDATE pedidos SET estado = $1 WHERE id = $2 AND repartidor_id = $3 RETURNING id`;
+        const orderRes = await client.query(updateOrderQuery, [status, pedido_id, driverId]);
+
+        if (orderRes.rows.length === 0) {
+            throw new Error("Pedido no encontrado o no pertenece al repartidor");
         }
 
-        await pool.query(`UPDATE pedidos SET estado = $1 WHERE id = $2`, [status, pedido_id]);
-        
+        // 2. Lógica según el nuevo estado
         if (status === 'en_camino') {
-            await pool.query(
+            // ✅ CRÍTICO: Aseguramos que la DB sepa que el repartidor está ocupado
+            await client.query(
                 `UPDATE repartidores SET tiene_pedido = true, is_available = false WHERE usuario_id = $1`, 
                 [driverId]
             );
+        } 
+        else if (status === 'entregado') {
+            // ✅ FINALIZACIÓN: Liberamos al repartidor por completo
+            await client.query(
+                `UPDATE repartidores SET tiene_pedido = false, is_available = true, ultima_entrega_at = NOW() WHERE usuario_id = $1`, 
+                [driverId]
+            );
+            
+            // Registramos la fecha de entrega en el pedido
+            await client.query(`UPDATE pedidos SET fecha_entrega = NOW() WHERE id = $1`, [pedido_id]);
         }
 
-        res.json({ success: true });
+        await client.query("COMMIT");
+
+        // 3. Notificaciones Socket (Opcional: avisar al cliente)
+        if (io) {
+            // Buscamos al cliente para notificarle el cambio de estado
+            const clienteRes = await pool.query("SELECT cliente_id FROM pedidos WHERE id = $1", [pedido_id]);
+            if (clienteRes.rows[0]) {
+                io.to(clienteRes.rows[0].cliente_id.toString()).emit('ORDEN_ACTUALIZADA', {
+                    pedido_id,
+                    nuevo_estado: status
+                });
+            }
+
+            // Si se entregó, disparamos la asignación de pedidos pendientes para otros repartidores
+            if (status === 'entregado') {
+                assignPendingOrders(io);
+            }
+        }
+
+        res.json({ success: true, message: `Estado actualizado a ${status}` });
+
     } catch (error) {
+        if (client) await client.query("ROLLBACK");
+        console.error("Error en updateOrderStatus:", error);
         res.status(500).json({ success: false, error: error.message });
+    } finally {
+        client.release();
     }
+};
+
+// 4. Finalizar pedido (Alias para compatibilidad si el front lo llama directo)
+export const completeOrder = (req, res) => {
+    req.body.status = 'entregado';
+    return updateOrderStatus(req, res);
 };
 
 // import { pool } from '../../db.js';
