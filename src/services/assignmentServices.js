@@ -6,21 +6,12 @@ export const assignPendingOrders = async (io, excludeId = 0) => {
     const client = await pool.connect();
     
     try {
+        // 1. Iniciamos una Transacción
         await client.query('BEGIN');
 
-        // 1. LIMPIEZA: Liberamos pedidos que quedaron "en el aire" 
-        // (Asignados a gente que se desconectó o se puso no disponible)
-        await client.query(`
-            UPDATE pedidos 
-            SET estado = 'pendiente', repartidor_id = NULL 
-            WHERE estado = 'asignado' 
-            AND (
-                repartidor_id IN (SELECT usuario_id FROM repartidores WHERE is_available = false OR is_active != 'activo')
-                OR repartidor_id = $1
-            )
-        `, [excludeId]);
-
-        // 2. Buscamos el pedido pendiente
+        // 2. BUSCAMOS EL PEDIDO CON BLOQUEO
+        // 'FOR UPDATE' bloquea la fila para que nadie más la lea.
+        // 'SKIP LOCKED' hace que si otro proceso ya la bloqueó, este proceso la ignore y no intente asignarla.
         const orderRes = await client.query(`
             SELECT p.id, p.total_dolar as monto, u.nombre as cliente_nombre,
                    dir_o.calle as recogida, dir_d.calle as entrega
@@ -30,48 +21,46 @@ export const assignPendingOrders = async (io, excludeId = 0) => {
             JOIN direcciones dir_d ON p.direccion_destino_id = dir_d.id
             WHERE p.estado = 'pendiente'
             ORDER BY p.fecha_pedido ASC
-            LIMIT 1 FOR UPDATE SKIP LOCKED;
+            LIMIT 1 
+            FOR UPDATE SKIP LOCKED; 
         `);
 
         if (orderRes.rows.length === 0) {
-            await client.query('COMMIT');
+            await client.query('COMMIT'); // Nada que asignar
             return;
         }
 
         const pedido = orderRes.rows[0];
 
-        // 3. BUSCAMOS REPARTIDORES REALMENTE DISPONIBLES
+        // 3. BUSCAMOS REPARTIDORES DISPONIBLES
+        // Quitamos la exclusión de excludeId para que pueda repetirse si es el único,
+        // pero mantenemos los filtros de disponibilidad y socket activo.
         const driversRes = await client.query(`
             SELECT usuario_id FROM repartidores 
             WHERE is_available = true 
               AND is_active = 'activo'
-              AND usuario_id != $1
             ORDER BY available_since ASC;
-        `, [excludeId]);
+        `);
         
         let selectedDriverId = null;
 
-        // 4. VERIFICACIÓN DE SOCKET (ESTA ES LA CLAVE)
-        // Solo asignamos si el conductor TIENE una sesión de socket activa AHORA
         for (const driver of driversRes.rows) {
             const targetRoom = `driver_${driver.usuario_id}`;
             const socketsInRoom = await io.in(targetRoom).fetchSockets();
 
-            // Si no hay sockets en la sala, el conductor cerró la app/pestaña
             if (socketsInRoom.length > 0) {
                 selectedDriverId = driver.usuario_id;
                 break; 
             }
         }
 
-        // Si no encontramos a nadie con socket activo, cancelamos la asignación actual
         if (!selectedDriverId) {
-            console.log(`⚠️ Pedido #${pedido.id} sigue pendiente: No hay conductores con sesión de socket activa.`);
+            // Si no hay nadie conectado, liberamos el pedido (COMMIT finaliza el bloqueo FOR UPDATE)
             await client.query('COMMIT');
             return;
         }
 
-        // 5. SI PASA LOS FILTROS, ASIGNAMOS
+        // 4. MARCAMOS COMO ASIGNADO (Dentro de la misma transacción)
         await client.query(
             "UPDATE pedidos SET repartidor_id = $1, estado = 'asignado' WHERE id = $2",
             [selectedDriverId, pedido.id]
@@ -82,6 +71,8 @@ export const assignPendingOrders = async (io, excludeId = 0) => {
             [selectedDriverId]
         );
 
+        // 5. FINALIZAMOS TRANSACCIÓN
+        // Recién aquí el pedido deja de estar bloqueado, pero ya con estado 'asignado'
         await client.query('COMMIT');
 
         // 6. NOTIFICACIÓN
@@ -94,16 +85,15 @@ export const assignPendingOrders = async (io, excludeId = 0) => {
             estado: 'asignado'
         });
 
-        console.log(`✅ Pedido #${pedido.id} asignado con éxito al driver ${selectedDriverId}`);
+        console.log(`✅ Pedido #${pedido.id} asignado ÚNICAMENTE al driver ${selectedDriverId}`);
 
     } catch (error) {
         if (client) await client.query('ROLLBACK');
-        console.error("❌ Error en asignación:", error.message);
+        console.error("❌ Error en asignación concurrente:", error.message);
     } finally {
         client.release();
     }
 };
-
 // ✅ AHORA RECIBE excludeId PARA REFORZAR LA EXCLUSIÓN
 // export const assignPendingOrders = async (io, excludeId = 0) => {
 //     if (!io) return;
