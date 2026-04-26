@@ -30,38 +30,24 @@ export const toggleAvailability = async (req, res) => {
     }
 };
 
+// En repartidoresController.js
 export const getCurrentOrder = async (req, res) => {
     const userId = req.userId; 
     try {
-        // Traemos tiene_pedido de la tabla repartidores
         const driverResult = await pool.query(
             `SELECT is_available, is_active, tiene_pedido FROM repartidores WHERE usuario_id = $1`, 
             [userId]
         );
         
-        const orderQuery = `
-            SELECT p.id as pedido_id, p.total_dolar as monto, p.estado,
-                   u_c.nombre as cliente_nombre,
-                   dir_o.calle as recogida, dir_d.calle as entrega
-            FROM pedidos p
-            JOIN usuarios u_c ON p.cliente_id = u_c.id
-            JOIN direcciones dir_o ON p.direccion_origen_id = dir_o.id
-            JOIN direcciones dir_d ON p.direccion_destino_id = dir_d.id
-            WHERE p.repartidor_id = $1 
-              AND p.estado IN ('asignado', 'en_camino')
-            LIMIT 1;
-        `;
-        const orderResult = await pool.query(orderQuery, [userId]);
-        
-        res.json({
-            active: orderResult.rows.length > 0,
-            order: orderResult.rows[0] || null,
-            isAvailableInDB: driverResult.rows[0]?.is_available,
-            tienePedido: driverResult.rows[0]?.tiene_pedido, // Dato crucial para el F5
-            status: driverResult.rows[0]?.is_active 
-        });
+        // ... resto del código
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        console.error("CRITICAL ERROR en getCurrentOrder:", error.message);
+        // Enviamos una respuesta de error pero NO dejamos que el servidor muera
+        res.status(500).json({ 
+            success: false, 
+            message: "Error interno del servidor. Verifique si la columna tiene_pedido existe.",
+            error: error.message 
+        });
     }
 };
 
