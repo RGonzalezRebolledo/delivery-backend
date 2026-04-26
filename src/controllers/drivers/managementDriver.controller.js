@@ -1,55 +1,57 @@
-import { pool } from '../../db.js'; 
+import { pool } from "../../db.js";
 // IMPORTANTE: Verifica si assignmentServices.js está realmente en esa ruta
-import { assignPendingOrders } from '../../services/assignmentServices.js'; 
+import { assignPendingOrders } from "../../services/assignmentServices.js";
 
 // 1. Cambiar Disponibilidad (Switch Manual)
 export const toggleAvailability = async (req, res) => {
-    const { available } = req.body;
-    const userId = req.userId;
-    const io = req.app.get('socketio'); 
+  const { available } = req.body;
+  const userId = req.userId;
+  const io = req.app.get("socketio");
 
-    try {
-        const query = `
+  try {
+    const query = `
             UPDATE repartidores 
             SET is_available = $1, 
                 available_since = CASE WHEN $1 = true THEN CURRENT_TIMESTAMP ELSE NULL END
             WHERE usuario_id = $2
             RETURNING is_available;
         `;
-        const result = await pool.query(query, [available, userId]);
-        
-        if (result.rows[0]?.is_available && io) {
-            assignPendingOrders(io);
-        }
+    const result = await pool.query(query, [available, userId]);
 
-        res.json({ 
-            success: true, 
-            isAvailable: result.rows[0]?.is_available 
-        });
-    } catch (error) {
-        console.error("Error en toggleAvailability:", error);
-        res.status(500).json({ success: false, error: error.message });
+    if (result.rows[0]?.is_available && io) {
+      assignPendingOrders(io);
     }
+
+    res.json({
+      success: true,
+      isAvailable: result.rows[0]?.is_available,
+    });
+  } catch (error) {
+    console.error("Error en toggleAvailability:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
 };
 
 // 2. Obtener estado actual (Sincronización para F5)
 export const getCurrentOrder = async (req, res) => {
-    const userId = req.userId; 
-    try {
-        // Obtenemos datos del repartidor
-        const driverRes = await pool.query(
-            `SELECT is_available, is_active, tiene_pedido FROM repartidores WHERE usuario_id = $1`, 
-            [userId]
-        );
-        
-        if (driverRes.rows.length === 0) {
-            return res.status(404).json({ success: false, message: "Repartidor no encontrado" });
-        }
+  const userId = req.userId;
+  try {
+    // Obtenemos datos del repartidor
+    const driverRes = await pool.query(
+      `SELECT is_available, is_active, tiene_pedido FROM repartidores WHERE usuario_id = $1`,
+      [userId]
+    );
 
-        const driver = driverRes.rows[0];
+    if (driverRes.rows.length === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Repartidor no encontrado" });
+    }
 
-        // Obtenemos pedido activo (asignado o en camino)
-        const orderQuery = `
+    const driver = driverRes.rows[0];
+
+    // Obtenemos pedido activo (asignado o en camino)
+    const orderQuery = `
             SELECT p.id as pedido_id, p.total_dolar as monto, p.estado,
                    u_c.nombre as cliente_nombre,
                    dir_o.calle as recogida, dir_d.calle as entrega
@@ -61,74 +63,91 @@ export const getCurrentOrder = async (req, res) => {
               AND p.estado IN ('asignado', 'en_camino')
             LIMIT 1;
         `;
-        const orderResult = await pool.query(orderQuery, [userId]);
+    const orderResult = await pool.query(orderQuery, [userId]);
+
+    res.json({
+      active: orderResult.rows.length > 0,
+      order: orderResult.rows[0] || null,
+      isAvailableInDB: driver.is_available,
+      tiene_pedido: driver.tiene_pedido, // <-- Usamos guion bajo para ser consistentes con la DB
+      status: driver.is_active,
+    });
+  } catch (error) {
+    console.error("Error en getCurrentOrder:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+import { pool } from '../../db.js';
+import { assignPendingOrders } from '../../services/assignmentServices.js';
+
+// ... (getCurrentOrder y toggleAvailability se mantienen igual)
+
+// FUNCIÓN QUE BUSCABA TU RUTA
+export const completeOrder = async (req, res) => {
+    const { pedido_id } = req.body;
+    const driverId = req.userId;
+    const io = req.app.get('socketio');
+
+    try {
+        // Marcamos como entregado en la DB
+        await pool.query(
+            `UPDATE pedidos SET estado = 'entregado', fecha_entrega = NOW() WHERE id = $1`, 
+            [pedido_id]
+        );
         
-        res.json({
-            active: orderResult.rows.length > 0,
-            order: orderResult.rows[0] || null,
-            isAvailableInDB: driver.is_available,
-            tiene_pedido: driver.tiene_pedido, // <-- Usamos guion bajo para ser consistentes con la DB
-            status: driver.is_active 
-        });
+        // Liberamos al repartidor: is_available = true y tiene_pedido = false
+        await pool.query(
+            `UPDATE repartidores SET is_available = true, tiene_pedido = false WHERE usuario_id = $1`, 
+            [driverId]
+        );
+
+        if (io) {
+            // Notificamos al sistema para que asigne nuevos pedidos
+            assignPendingOrders(io);
+        }
+
+        res.json({ success: true, message: "Pedido completado exitosamente" });
     } catch (error) {
-        console.error("Error en getCurrentOrder:", error);
-        res.status(500).json({ error: error.message });
+        console.error("Error en completeOrder:", error);
+        res.status(500).json({ success: false, error: error.message });
     }
 };
 
-// 3. Actualizar Estado del Pedido
+// Mantenemos esta también por si el frontend la usa para "En camino"
 export const updateOrderStatus = async (req, res) => {
     const { pedido_id, status } = req.body;
-    const driverId = req.userId; 
-    const io = req.app.get('socketio'); 
+    const driverId = req.userId;
+    const io = req.app.get('socketio');
 
     try {
-        const pedidoResult = await pool.query("SELECT cliente_id FROM pedidos WHERE id = $1", [pedido_id]);
-        if (pedidoResult.rows.length === 0) return res.status(404).json({ success: false });
-        const cliente_id = pedidoResult.rows[0].cliente_id;
+        if (status === 'entregado') {
+            return completeOrder(req, res); // Reutilizamos la lógica de arriba
+        }
 
-        if (status === 'entregado' || status === 'pendiente') {
-            // Finalizar pedido
-            await pool.query(
-                `UPDATE pedidos SET estado = $1, fecha_entrega = CASE WHEN $1 = 'entregado' THEN NOW() ELSE NULL END WHERE id = $2`, 
-                [status, pedido_id]
-            );
-            
-            // Liberar al repartidor: disponible y sin pedido
-            await pool.query(
-                `UPDATE repartidores SET is_available = true, tiene_pedido = false WHERE usuario_id = $1`, 
-                [driverId]
-            );
-        } 
-        else if (status === 'en_camino') {
-            await pool.query(`UPDATE pedidos SET estado = 'en_camino' WHERE id = $1`, [pedido_id]);
-            
-            // Marcar que tiene pedido pero no está disponible para nuevos envíos
+        await pool.query(`UPDATE pedidos SET estado = $1 WHERE id = $2`, [status, pedido_id]);
+        
+        if (status === 'en_camino') {
             await pool.query(
                 `UPDATE repartidores SET tiene_pedido = true, is_available = false WHERE usuario_id = $1`, 
                 [driverId]
             );
         }
 
-        if (io) {
-            io.to(cliente_id.toString()).emit('ORDEN_ACTUALIZADA', { pedido_id, nuevo_estado: status });
-            if (status === 'entregado' || status === 'pendiente') assignPendingOrders(io);
-        }
-
         res.json({ success: true });
     } catch (error) {
-        console.error("Error en updateOrderStatus:", error);
         res.status(500).json({ success: false, error: error.message });
     }
 };
+
 // import { pool } from '../../db.js';
-// import { assignPendingOrders } from '../../services/assignmentServices.js'; 
+// import { assignPendingOrders } from '../../services/assignmentServices.js';
 
 // // 1. ACTIVAR/DESACTIVAR DISPONIBILIDAD
 // export const toggleAvailability = async (req, res) => {
 //     const { available } = req.body;
 //     const userId = req.userId;
-//     const io = req.app.get('socketio'); 
+//     const io = req.app.get('socketio');
 
 //     try {
 //         // 1. Verificar el estado administrativo del repartidor
@@ -145,17 +164,17 @@ export const updateOrderStatus = async (req, res) => {
 
 //         // Bloqueo si el usuario está suspendido
 //         if (currentStatus === 'suspendido' && available === true) {
-//             return res.status(403).json({ 
-//                 success: false, 
-//                 message: 'Tu cuenta está suspendida. No puedes ponerte en línea.' 
+//             return res.status(403).json({
+//                 success: false,
+//                 message: 'Tu cuenta está suspendida. No puedes ponerte en línea.'
 //             });
 //         }
 
 //         // 2. Actualizar disponibilidad en la base de datos
 //         // Si se pone disponible (true), grabamos el timestamp para el orden FIFO
 //         const query = `
-//             UPDATE repartidores 
-//             SET is_available = $1, 
+//             UPDATE repartidores
+//             SET is_available = $1,
 //                 available_since = CASE WHEN $1 = true THEN CURRENT_TIMESTAMP ELSE NULL END
 //             WHERE usuario_id = $2
 //             RETURNING is_available;
@@ -166,9 +185,9 @@ export const updateOrderStatus = async (req, res) => {
 //         // 3. LÓGICA DE ASIGNACIÓN AUTOMÁTICA
 //         if (isNowAvailable && currentStatus !== 'suspendido') {
 //             console.log(`👷 Conductor ${userId} ahora está EN LÍNEA. Verificando cola de pedidos...`);
-            
+
 //             /**
-//              * Usamos un setTimeout para dar tiempo a que el cliente (Frontend) 
+//              * Usamos un setTimeout para dar tiempo a que el cliente (Frontend)
 //              * complete el proceso de conexión al Socket y se una a la sala 'driver_ID'
 //              * antes de intentar enviarle una notificación de pedido.
 //              */
@@ -176,30 +195,30 @@ export const updateOrderStatus = async (req, res) => {
 //                 if (io) {
 //                     assignPendingOrders(io);
 //                 }
-//             }, 1500); 
+//             }, 1500);
 //         }
 
 //         // 4. Respuesta al cliente
 //         res.json({
 //             success: true,
 //             isAvailable: isNowAvailable,
-//             message: isNowAvailable 
-//                 ? 'Conectado. Buscando pedidos pendientes...' 
+//             message: isNowAvailable
+//                 ? 'Conectado. Buscando pedidos pendientes...'
 //                 : 'Te has desconectado.'
 //         });
 
 //     } catch (error) {
 //         console.error("❌ Error en toggleAvailability:", error.message);
-//         res.status(500).json({ 
-//             success: false, 
-//             error: 'Error al cambiar disponibilidad del repartidor' 
+//         res.status(500).json({
+//             success: false,
+//             error: 'Error al cambiar disponibilidad del repartidor'
 //         });
 //     }
 // };
 
 // // 2. OBTENER PEDIDO ACTUAL Y STATUS DEL REPARTIDOR
 // export const getCurrentOrder = async (req, res) => {
-//     const userId = req.userId; 
+//     const userId = req.userId;
 
 //     try {
 //         // 1. Verificamos el estado del repartidor
@@ -220,7 +239,7 @@ export const updateOrderStatus = async (req, res) => {
 //             JOIN usuarios u_c ON p.cliente_id = u_c.id
 //             JOIN direcciones dir_o ON p.direccion_origen_id = dir_o.id
 //             JOIN direcciones dir_d ON p.direccion_destino_id = dir_d.id
-//             WHERE p.repartidor_id = $1 
+//             WHERE p.repartidor_id = $1
 //               AND p.estado IN ('asignado', 'en_camino')
 //             LIMIT 1;
 //         `;
@@ -228,13 +247,13 @@ export const updateOrderStatus = async (req, res) => {
 //         const orderResult = await pool.query(orderQuery, [userId]);
 
 //         const hasActiveOrder = orderResult.rows.length > 0;
-        
+
 //         // Enviamos la respuesta limpia
 //         res.json({
 //             active: hasActiveOrder,
 //             order: hasActiveOrder ? orderResult.rows[0] : null,
 //             isAvailableInDB: driverResult.rows[0].is_available,
-//             status: driverResult.rows[0].is_active 
+//             status: driverResult.rows[0].is_active
 //         });
 
 //     } catch (error) {
@@ -283,8 +302,8 @@ export const updateOrderStatus = async (req, res) => {
 
 // export const updateOrderStatus = async (req, res) => {
 //     const { pedido_id, status } = req.body;
-//     const driverId = req.userId; 
-//     const io = req.app.get('socketio'); 
+//     const driverId = req.userId;
+//     const io = req.app.get('socketio');
 
 //     const client = await pool.connect();
 
@@ -304,8 +323,8 @@ export const updateOrderStatus = async (req, res) => {
 
 //         if (status === 'pendiente') {
 //             // --- EL CONDUCTOR RECHAZÓ O SE LE ACABÓ EL TIEMPO ---
-            
-//             // ✅ CAMBIO CRÍTICO: No ponemos repartidor_id en NULL. 
+
+//             // ✅ CAMBIO CRÍTICO: No ponemos repartidor_id en NULL.
 //             // Lo dejamos para que assignPendingOrders sepa a quién excluir.
 //             await client.query(
 //                 `UPDATE pedidos SET estado = 'pendiente' WHERE id = $1`,
@@ -313,8 +332,8 @@ export const updateOrderStatus = async (req, res) => {
 //             );
 
 //             await client.query(
-//                 `UPDATE repartidores 
-//                  SET is_available = true, available_since = NOW() 
+//                 `UPDATE repartidores
+//                  SET is_available = true, available_since = NOW()
 //                  WHERE usuario_id = $1`,
 //                 [driverId]
 //             );
@@ -332,8 +351,8 @@ export const updateOrderStatus = async (req, res) => {
 //             );
 
 //             await client.query(
-//                 `UPDATE repartidores 
-//                  SET is_available = true, available_since = NOW() 
+//                 `UPDATE repartidores
+//                  SET is_available = true, available_since = NOW()
 //                  WHERE usuario_id = $1`,
 //                 [driverId]
 //             );
@@ -351,13 +370,13 @@ export const updateOrderStatus = async (req, res) => {
 //         if (status === 'pendiente') {
 //             console.log(`🔄 Reasignando pedido #${pedido_id}. Excluyendo conductor ${driverId}...`);
 //             // ✅ PASAMOS EL driverId para asegurar que no se le asigne a él mismo otra vez
-//             assignPendingOrders(io, driverId); 
+//             assignPendingOrders(io, driverId);
 //         }
 
-//         res.json({ 
-//             success: true, 
+//         res.json({
+//             success: true,
 //             message: `Estado actualizado a ${status}`,
-//             cliente_notificado: cliente_id 
+//             cliente_notificado: cliente_id
 //         });
 
 //     } catch (error) {
@@ -368,5 +387,3 @@ export const updateOrderStatus = async (req, res) => {
 //         client.release();
 //     }
 // };
-
-
