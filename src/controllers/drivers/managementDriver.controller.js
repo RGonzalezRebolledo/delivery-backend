@@ -111,53 +111,36 @@ export const updateOrderStatus = async (req, res) => {
     const io = req.app.get('socketio'); 
 
     try {
-        const pedidoResult = await pool.query(
-            "SELECT cliente_id FROM pedidos WHERE id = $1", 
-            [pedido_id]
-        );
-        
-        if (pedidoResult.rows.length === 0) {
-            return res.status(404).json({ success: false, message: "Pedido no encontrado" });
-        }
-
+        // Obtener cliente_id para notificar por socket
+        const pedidoResult = await pool.query("SELECT cliente_id FROM pedidos WHERE id = $1", [pedido_id]);
+        if (pedidoResult.rows.length === 0) return res.status(404).json({ success: false });
         const cliente_id = pedidoResult.rows[0].cliente_id;
 
-        // FLUJO ESTABLE:
-        if (status === 'entregado') {
-            // 1. Finalizar pedido y liberar repartidor
-            await pool.query(
-                `UPDATE pedidos SET estado = 'entregado', fecha_entrega = NOW() WHERE id = $1`, 
-                [pedido_id]
-            );
-            await pool.query(
-                `UPDATE repartidores SET is_available = true, available_since = NOW() WHERE usuario_id = $1`, 
-                [driverId]
-            );
-            console.log(`✅ Pedido ${pedido_id} entregado. Repartidor ${driverId} libre.`);
+        // --- LÓGICA DE ESTADOS Y COLUMNA TIENE_PEDIDO ---
+        if (status === 'entregado' || status === 'pendiente') {
+            // Caso: El conductor se libera
+            await pool.query(`UPDATE pedidos SET estado = $1, fecha_entrega = CASE WHEN $1 = 'entregado' THEN NOW() ELSE NULL END WHERE id = $2`, [status, pedido_id]);
+            
+            // IMPORTANTE: Al terminar, lo ponemos disponible y quitamos la marca de tiene_pedido
+            await pool.query(`UPDATE repartidores SET is_available = true, tiene_pedido = false WHERE usuario_id = $1`, [driverId]);
         } 
         else if (status === 'en_camino') {
-            // 2. Cambiar a en camino (el repartidor ya está ocupado is_available=false desde la asignación)
+            // Caso: El conductor inicia la ruta
             await pool.query(`UPDATE pedidos SET estado = 'en_camino' WHERE id = $1`, [pedido_id]);
-            console.log(`🚚 Pedido ${pedido_id} ahora está en camino.`);
-        }
-
-        // Notificar al cliente siempre que haya un cambio
-        if (io) {
-            io.to(cliente_id.toString()).emit('ORDEN_ACTUALIZADA', {
-                pedido_id: parseInt(pedido_id),
-                nuevo_estado: status
-            });
             
-            // Si el driver se liberó, buscar si hay más pedidos pendientes
-            if (status === 'entregado') {
-                assignPendingOrders(io);
-            }
+            // Marcamos que tiene un pedido activo (aunque is_available sea false en DB por seguridad)
+            await pool.query(`UPDATE repartidores SET tiene_pedido = true WHERE usuario_id = $1`, [driverId]);
         }
 
-        res.json({ success: true, message: `Estado actualizado a ${status}` });
+        // Notificaciones Socket
+        if (io) {
+            io.to(cliente_id.toString()).emit('ORDEN_ACTUALIZADA', { pedido_id, nuevo_estado: status });
+            if (status === 'entregado' || status === 'pendiente') assignPendingOrders(io);
+        }
 
+        res.json({ success: true });
     } catch (error) {
-        console.error("🔥 Error en updateOrderStatus:", error.message);
+        console.error("Error status:", error);
         res.status(500).json({ success: false, error: error.message });
     }
 };
