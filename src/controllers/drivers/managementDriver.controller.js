@@ -1,5 +1,4 @@
 import { pool } from '../../db.js';
-
 import { assignPendingOrders } from '../../services/assignmentServices.js'; 
 
 export const toggleAvailability = async (req, res) => {
@@ -28,6 +27,8 @@ export const getCurrentOrder = async (req, res) => {
     const userId = req.userId; 
     try {
         const driverResult = await pool.query(`SELECT is_available, is_active FROM repartidores WHERE usuario_id = $1`, [userId]);
+        
+        // ⚡️ Optimización: Solo traer pedidos que pertenezcan al driver y estén en estados activos
         const orderQuery = `
             SELECT p.id as pedido_id, p.total_dolar as monto, p.estado,
                    u_c.nombre as cliente_nombre,
@@ -36,10 +37,12 @@ export const getCurrentOrder = async (req, res) => {
             JOIN usuarios u_c ON p.cliente_id = u_c.id
             JOIN direcciones dir_o ON p.direccion_origen_id = dir_o.id
             JOIN direcciones dir_d ON p.direccion_destino_id = dir_d.id
-            WHERE p.repartidor_id = $1 AND p.estado IN ('asignado', 'en_camino')
+            WHERE p.repartidor_id = $1 
+              AND p.estado IN ('asignado', 'en_camino')
             LIMIT 1;
         `;
         const orderResult = await pool.query(orderQuery, [userId]);
+        
         res.json({
             active: orderResult.rows.length > 0,
             order: orderResult.rows[0] || null,
@@ -51,7 +54,6 @@ export const getCurrentOrder = async (req, res) => {
     }
 };
 
-// ✅ ESTA ES LA FUNCIÓN QUE FALTABA Y CAUSABA EL ERROR
 export const completeOrder = async (req, res) => {
     const { pedidoId } = req.body;
     const userId = req.userId;
@@ -71,29 +73,54 @@ export const updateOrderStatus = async (req, res) => {
 
     try {
         const pedidoResult = await pool.query("SELECT cliente_id FROM pedidos WHERE id = $1", [pedido_id]);
+        
+        if (pedidoResult.rows.length === 0) {
+            return res.status(404).json({ success: false, message: "Pedido no encontrado" });
+        }
+
         const cliente_id = pedidoResult.rows[0].cliente_id;
 
         if (status === 'pendiente') {
-            await pool.query(`UPDATE pedidos SET estado = 'pendiente' WHERE id = $1`, [pedido_id]);
-            await pool.query(`UPDATE repartidores SET is_available = true WHERE usuario_id = $1`, [driverId]);
+            // ⚡️ CASO RECHAZO: Limpieza profunda para que no se recargue al volver a entrar
+            // 1. Ponemos el pedido en pendiente y ELIMINAMOS el repartidor_id (clave)
+            await pool.query(
+                `UPDATE pedidos SET estado = 'pendiente', repartidor_id = NULL WHERE id = $1`, 
+                [pedido_id]
+            );
+            
+            // 2. Liberamos al repartidor para que pueda recibir otros pedidos
+            await pool.query(
+                `UPDATE repartidores SET is_available = true WHERE usuario_id = $1`, 
+                [driverId]
+            );
+
+            // 3. Borramos la relación en la tabla intermedia
+            await pool.query(
+                `DELETE FROM repartidores_pedidos WHERE pedido_id = $1 AND repartidor_id = $2`,
+                [pedido_id, driverId]
+            );
         } else {
+            // Caso normal: Actualizar a 'en_camino' u otros
             await pool.query(`UPDATE pedidos SET estado = $1 WHERE id = $2`, [status, pedido_id]);
         }
 
         if (io) {
+            // Notificar al cliente del cambio de estado
             io.to(cliente_id.toString()).emit('ORDEN_ACTUALIZADA', {
                 pedido_id: parseInt(pedido_id),
                 nuevo_estado: status
             });
+            
+            // Si fue rechazo, disparar inmediatamente la reasignación para buscar a otro driver
             if (status === 'pendiente') assignPendingOrders(io, driverId);
         }
 
         res.json({ success: true });
     } catch (error) {
+        console.error("Error en updateOrderStatus:", error);
         res.status(500).json({ success: false, error: error.message });
     }
 };
-
 
 // import { pool } from '../../db.js';
 // import { assignPendingOrders } from '../../services/assignmentServices.js'; 
