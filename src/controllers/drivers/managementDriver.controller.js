@@ -16,7 +16,6 @@ export const toggleAvailability = async (req, res) => {
         `;
         const result = await pool.query(query, [available, userId]);
         
-        // Si el repartidor se pone disponible, ejecutamos la búsqueda de pedidos pendientes
         if (result.rows[0]?.is_available && io) {
             assignPendingOrders(io);
         }
@@ -34,7 +33,11 @@ export const toggleAvailability = async (req, res) => {
 export const getCurrentOrder = async (req, res) => {
     const userId = req.userId; 
     try {
-        const driverResult = await pool.query(`SELECT is_available, is_active FROM repartidores WHERE usuario_id = $1`, [userId]);
+        // Traemos tiene_pedido de la tabla repartidores
+        const driverResult = await pool.query(
+            `SELECT is_available, is_active, tiene_pedido FROM repartidores WHERE usuario_id = $1`, 
+            [userId]
+        );
         
         const orderQuery = `
             SELECT p.id as pedido_id, p.total_dolar as monto, p.estado,
@@ -54,6 +57,7 @@ export const getCurrentOrder = async (req, res) => {
             active: orderResult.rows.length > 0,
             order: orderResult.rows[0] || null,
             isAvailableInDB: driverResult.rows[0]?.is_available,
+            tienePedido: driverResult.rows[0]?.tiene_pedido, // Dato crucial para el F5
             status: driverResult.rows[0]?.is_active 
         });
     } catch (error) {
@@ -61,78 +65,35 @@ export const getCurrentOrder = async (req, res) => {
     }
 };
 
-// Esta función es la que liberaba al driver, pero el frontend no la llamaba
-export const completeOrder = async (req, res) => {
-    const { pedidoId } = req.body;
-    const userId = req.userId;
-    const io = req.app.get('socketio');
-    const client = await pool.connect();
-
-    try {
-        await client.query("BEGIN");
-
-        const orderRes = await client.query(
-            `UPDATE pedidos 
-             SET estado = 'entregado', fecha_entrega = NOW() 
-             WHERE id = $1 AND repartidor_id = $2
-             RETURNING id`, 
-            [pedidoId, userId]
-        );
-
-        const driverRes = await client.query(
-            `UPDATE repartidores 
-             SET is_available = true, available_since = NOW() 
-             WHERE usuario_id = $1
-             RETURNING is_available`, 
-            [userId]
-        );
-
-        await client.query("COMMIT");
-
-        if (orderRes.rowCount > 0 && driverRes.rowCount > 0) {
-            console.log(`✅ Driver ${userId} liberado vía completeOrder`);
-            if (io) assignPendingOrders(io);
-            return res.json({ success: true, isAvailable: true });
-        } else {
-            throw new Error("No se pudo actualizar el estado");
-        }
-    } catch (error) {
-        await client.query("ROLLBACK");
-        res.status(500).json({ success: false, error: error.message });
-    } finally {
-        client.release();
-    }
-};
-
-// updateOrderStatus simplificado para versión estable
 export const updateOrderStatus = async (req, res) => {
     const { pedido_id, status } = req.body;
     const driverId = req.userId; 
     const io = req.app.get('socketio'); 
 
     try {
-        // Obtener cliente_id para notificar por socket
         const pedidoResult = await pool.query("SELECT cliente_id FROM pedidos WHERE id = $1", [pedido_id]);
         if (pedidoResult.rows.length === 0) return res.status(404).json({ success: false });
         const cliente_id = pedidoResult.rows[0].cliente_id;
 
-        // --- LÓGICA DE ESTADOS Y COLUMNA TIENE_PEDIDO ---
         if (status === 'entregado' || status === 'pendiente') {
-            // Caso: El conductor se libera
-            await pool.query(`UPDATE pedidos SET estado = $1, fecha_entrega = CASE WHEN $1 = 'entregado' THEN NOW() ELSE NULL END WHERE id = $2`, [status, pedido_id]);
+            await pool.query(
+                `UPDATE pedidos SET estado = $1, fecha_entrega = CASE WHEN $1 = 'entregado' THEN NOW() ELSE NULL END WHERE id = $2`, 
+                [status, pedido_id]
+            );
             
-            // IMPORTANTE: Al terminar, lo ponemos disponible y quitamos la marca de tiene_pedido
-            await pool.query(`UPDATE repartidores SET is_available = true, tiene_pedido = false WHERE usuario_id = $1`, [driverId]);
+            // Liberamos al repartidor en la tabla
+            await pool.query(
+                `UPDATE repartidores SET is_available = true, tiene_pedido = false WHERE usuario_id = $1`, 
+                [driverId]
+            );
         } 
         else if (status === 'en_camino') {
-            // Caso: El conductor inicia la ruta
             await pool.query(`UPDATE pedidos SET estado = 'en_camino' WHERE id = $1`, [pedido_id]);
             
-            // Marcamos que tiene un pedido activo (aunque is_available sea false en DB por seguridad)
+            // Aseguramos que tiene_pedido sea true
             await pool.query(`UPDATE repartidores SET tiene_pedido = true WHERE usuario_id = $1`, [driverId]);
         }
 
-        // Notificaciones Socket
         if (io) {
             io.to(cliente_id.toString()).emit('ORDEN_ACTUALIZADA', { pedido_id, nuevo_estado: status });
             if (status === 'entregado' || status === 'pendiente') assignPendingOrders(io);
@@ -144,7 +105,6 @@ export const updateOrderStatus = async (req, res) => {
         res.status(500).json({ success: false, error: error.message });
     }
 };
-
 // import { pool } from '../../db.js';
 // import { assignPendingOrders } from '../../services/assignmentServices.js'; 
 
