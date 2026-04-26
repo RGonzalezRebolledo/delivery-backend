@@ -200,7 +200,17 @@ CREATE INDEX idx_payments_ref ON payments(referencia_bancaria);
 CREATE INDEX idx_repartidores_disponibilidad ON repartidores(is_available);
 CREATE INDEX idx_repartidores_fifo_queue ON repartidores (available_since) WHERE is_available = TRUE;
 
+-- ------------------------------------------------------------------
 
+-- Insertar vehículo MOTO por defecto
+INSERT INTO tipos_vehiculos (descript, amount_pay)
+SELECT 'MOTO', 0.00
+WHERE NOT EXISTS (SELECT 1 FROM tipos_vehiculos WHERE descript = 'MOTO');
+
+-- Insertar servicio DELIVERY por defecto
+INSERT INTO tipos_servicios (descript, amount_pay)
+SELECT 'DELIVERY', 0.00
+WHERE NOT EXISTS (SELECT 1 FROM tipos_servicios WHERE descript = 'DELIVERY');
 
 -- -- ------------------------------------------------------------------
 -- -- SCRIPT COMPLETO CONSOLIDADO: GAZELLA EXPRESS (VENEZUELA UTC-4)

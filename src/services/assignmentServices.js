@@ -2,16 +2,13 @@ import { pool } from '../db.js';
 
 export const assignPendingOrders = async (io) => {
     if (!io) return;
-
     let client;
     
     try {
         client = await pool.connect();
-
-        // 1. Buscamos el pedido pendiente más antiguo (Bloqueo estricto)
-        // Agregamos SKIP LOCKED para que si dos procesos corren al mismo tiempo, no choquen
         await client.query('BEGIN');
 
+        // 1. Buscamos pedido pendiente
         const orderRes = await client.query(`
             SELECT p.id, p.total_dolar as monto, u.nombre as cliente_nombre,
                    dir_o.calle as recogida, dir_d.calle as entrega
@@ -32,24 +29,25 @@ export const assignPendingOrders = async (io) => {
 
         const pedido = orderRes.rows[0];
 
-        // 2. Buscamos conductores disponibles
-        // IMPORTANTE: Aquí solo filtramos por los que están marcados como disponibles en DB
+        // 2. Buscamos conductores realmente libres
+        // Filtramos por aquellos que NO tengan pedidos en curso en la tabla pedidos
         const driversRes = await client.query(`
-            SELECT usuario_id FROM repartidores 
-            WHERE is_available = true 
-              AND is_active = 'activo'
-              AND tiene_pedido = false
-            ORDER BY available_since ASC;
+            SELECT r.usuario_id 
+            FROM repartidores r
+            WHERE r.is_available = true 
+              AND r.is_active = 'activo'
+              AND r.tiene_pedido = false
+              AND NOT EXISTS (
+                  SELECT 1 FROM pedidos p 
+                  WHERE p.repartidor_id = r.usuario_id 
+                  AND p.estado IN ('asignado', 'en_camino')
+              )
+            ORDER BY r.available_since ASC;
         `);
 
         let selectedDriverId = null;
-
         for (const driver of driversRes.rows) {
-            const targetRoom = `driver_${driver.usuario_id}`;
-            const socketsInRoom = await io.in(targetRoom).fetchSockets();
-            
-            // ✅ VALIDACIÓN: Solo asignamos si el conductor tiene al menos un socket activo
-            // Esto evita asignar pedidos a gente que cerró la pestaña
+            const socketsInRoom = await io.in(`driver_${driver.usuario_id}`).fetchSockets();
             if (socketsInRoom.length > 0) {
                 selectedDriverId = driver.usuario_id;
                 break; 
@@ -57,8 +55,6 @@ export const assignPendingOrders = async (io) => {
         }
 
         if (selectedDriverId) {
-            // 3. ACTUALIZACIÓN ATÓMICA
-            // Marcamos pedido como asignado y al repartidor como ocupado
             await client.query(
                 "UPDATE pedidos SET repartidor_id = $1, estado = 'asignado' WHERE id = $2",
                 [selectedDriverId, pedido.id]
@@ -71,7 +67,6 @@ export const assignPendingOrders = async (io) => {
 
             await client.query('COMMIT');
 
-            // 4. NOTIFICACIÓN
             io.to(`driver_${selectedDriverId}`).emit('NUEVO_PEDIDO', {
                 pedido_id: pedido.id,
                 monto: pedido.monto,
@@ -81,30 +76,20 @@ export const assignPendingOrders = async (io) => {
                 estado: 'asignado'
             });
 
-            console.log(`✅ Pedido #${pedido.id} asignado exitosamente a Driver #${selectedDriverId}`);
-
-            // Liberamos y re-ejecutamos para ver si hay más pedidos
+            console.log(`✅ Pedido #${pedido.id} asignado a Driver #${selectedDriverId}`);
             client.release();
-            client = null; // Evitamos que el finally intente liberarlo de nuevo
-            
-            // Pequeño delay para no saturar el event loop en caso de muchos pedidos
+            client = null;
             setTimeout(() => assignPendingOrders(io), 500); 
 
         } else {
-            // No hay conductores con socket activo ahora mismo
             await client.query('ROLLBACK');
-            console.log(`⏳ Pedido #${pedido.id} esperando: No hay conductores con sesión activa.`);
         }
 
     } catch (error) {
-        if (client) {
-            try { await client.query('ROLLBACK'); } catch (e) { /* silent */ }
-        }
+        if (client) try { await client.query('ROLLBACK'); } catch (e) {}
         console.error("❌ Error en assignPendingOrders:", error.message);
     } finally {
-        if (client) {
-            client.release();
-        }
+        if (client) client.release();
     }
 };
 // ✅ AHORA RECIBE excludeId PARA REFORZAR LA EXCLUSIÓN

@@ -64,22 +64,22 @@ const io = new Server(httpServer, {
     allowEIO3: true
 });
 
+// Guardar io en app para acceder desde los controladores
 app.set('socketio', io);
 
 // --- GESTIÓN DE EVENTOS SOCKET.IO ---
 io.on('connection', (socket) => {
     console.log('📱 Dispositivo conectado:', socket.id);
 
-    // Unirse a sala de Repartidor (Lógica unificada y corregida)
+    // Unirse a sala de Repartidor
     socket.on('join_driver_room', (usuario_id) => {
         if (!usuario_id) return;
 
         const room = `driver_${usuario_id}`;
         socket.userId = usuario_id; 
 
-        // Limpiar suscripciones previas para evitar duplicidad de mensajes
-        const currentRooms = Array.from(socket.rooms);
-        currentRooms.forEach(r => { 
+        // Limpiar suscripciones previas (excepto su propio ID) para evitar duplicidad
+        socket.rooms.forEach(r => { 
             if(r !== socket.id) socket.leave(r); 
         });
 
@@ -88,7 +88,8 @@ io.on('connection', (socket) => {
         
         socket.emit('room_joined', room); 
         
-        // Al conectar o refrescar (F5), verificamos si hay pedidos para este conductor
+        // Al conectar o refrescar (F5), verificamos si hay pedidos pendientes en general
+        // El driver recuperará su pedido activo mediante la llamada a getCurrentOrder en el front
         assignPendingOrders(io);
     });
 
@@ -102,38 +103,25 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Gestión de desconexión involuntaria
-    socket.on('disconnect', async (reason) => {
+    // Gestión de desconexión
+    socket.on('disconnect', (reason) => {
         console.log(`❌ Conexión cerrada (${socket.id}):`, reason);
         
-        if (socket.userId) {
-            try {
-                // Si el conductor se cae y tenía un pedido solo 'asignado' (no aceptado), lo liberamos
-                const res = await pool.query(
-                    `UPDATE pedidos 
-                     SET estado = 'pendiente', repartidor_id = NULL 
-                     WHERE repartidor_id = $1 AND estado = 'asignado' 
-                     RETURNING id`,
-                    [socket.userId]
-                );
-
-                if (res.rowCount > 0) {
-                    console.log(`📦 Pedido #${res.rows[0].id} liberado por desconexión del driver ${socket.userId}`);
-                    assignPendingOrders(io);
-                }
-            } catch (err) {
-                console.error("Error en cleanup de desconexión:", err.message);
-            }
-        }
+        /* NOTA CRÍTICA: Se eliminó la lógica de poner el pedido en 'pendiente' aquí.
+           Esto evita que al refrescar la página (F5) el pedido se libere.
+           El pedido solo cambiará de estado cuando el repartidor lo marque manualmente 
+           o por una acción administrativa.
+        */
     });
 });
 
 // --- REASIGNACIÓN AUTOMÁTICA (Background) ---
+// Cada 30 segundos revisamos si hay pedidos huérfanos
 setInterval(() => {
     if (io) assignPendingOrders(io);
 }, 30000); 
 
-// --- LÓGICA CRON BCV ---
+// --- LÓGICA CRON BCV (Lunes a Viernes) ---
 cron.schedule('2 9,16 * * 1-5', async () => {
     console.log(`[${new Date().toLocaleString()}] Ejecutando actualización programada BCV...`);
     await runBcvScraper();
@@ -191,7 +179,6 @@ httpServer.listen(PORT, '0.0.0.0', async () => {
     }
     console.log("--------------------------");
 });
-
 
 // import 'dotenv/config';
 // import express from 'express';
