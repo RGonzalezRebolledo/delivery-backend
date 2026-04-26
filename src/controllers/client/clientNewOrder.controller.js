@@ -1,9 +1,5 @@
 import { pool } from "../../db.js";
-// import { verifyMercantilPayment } from "../../services/payment.service.js"; // Asegúrate de que esté disponible
 
-/**
- * Función auxiliar para buscar una dirección existente o crear una nueva.
- */
 const getOrCreateAddressId = async (address, municipality, client, clienteId) => {
   const checkQuery = `
         SELECT id FROM direcciones 
@@ -11,9 +7,7 @@ const getOrCreateAddressId = async (address, municipality, client, clienteId) =>
     `;
   const checkResult = await client.query(checkQuery, [clienteId, address, municipality]);
 
-  if (checkResult.rows.length > 0) {
-    return checkResult.rows[0].id;
-  }
+  if (checkResult.rows.length > 0) return checkResult.rows[0].id;
 
   const insertQuery = `
         INSERT INTO direcciones (usuario_id, calle, municipio, ciudad) 
@@ -21,28 +15,19 @@ const getOrCreateAddressId = async (address, municipality, client, clienteId) =>
         RETURNING id;
     `;
   const insertResult = await client.query(insertQuery, [clienteId, address, municipality, municipality]);
-
   return insertResult.rows[0].id;
 };
 
 export const createOrder = async (req, res) => {
   const clienteId = req.userId;
   const {
-    pickup,
-    pickupMunicipality,
-    delivery,
-    deliveryMunicipality,
-    price,
-    price_usd,
-    typevehicle,
-    typeservice,
-    receptpay,
-    payerPhone,
-    exchangeRate,
+    pickup, pickupMunicipality, delivery, deliveryMunicipality,
+    price, price_usd, typevehicle, typeservice, receptpay,
+    payerPhone, exchangeRate,
   } = req.body;
 
   if (!clienteId || !receptpay || !payerPhone || !price || !exchangeRate) {
-    return res.status(400).json({ error: "Faltan datos de pago o referencia bancaria." });
+    return res.status(400).json({ error: "Faltan datos de pago." });
   }
 
   const client = await pool.connect();
@@ -54,13 +39,7 @@ export const createOrder = async (req, res) => {
     const direccionRecogidaId = await getOrCreateAddressId(pickup, pickupMunicipality, client, clienteId);
     const direccionEntregaId = await getOrCreateAddressId(delivery, deliveryMunicipality, client, clienteId);
 
-    if (bankVerification !== true) {
-      // ... (Lógica de pago fallido se mantiene igual)
-      await client.query("COMMIT");
-      return res.status(402).json({ error: "Pago no verificado." });
-    }
-
-    // --- PASO 4: CREAR PEDIDO ---
+    // --- CREAR PEDIDO ---
     const orderQuery = `
       INSERT INTO pedidos (
           cliente_id, direccion_origen_id, direccion_destino_id, 
@@ -68,19 +47,19 @@ export const createOrder = async (req, res) => {
           tipo_vehiculo_id, tipo_servicio_id, nro_recibo, 
           fecha_pedido, estado, pago_confirmado
       ) 
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pendiente', TRUE) 
-      RETURNING id, fecha_pedido;
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), 'pendiente', TRUE) 
+      RETURNING id;
     `;
 
     const orderResult = await client.query(orderQuery, [
       clienteId, direccionRecogidaId, direccionEntregaId,
       pickupMunicipality, deliveryMunicipality, price, price_usd,
-      typevehicle, typeservice, receptpay, new Date(),
+      typevehicle, typeservice, receptpay
     ]);
 
     const newOrderId = orderResult.rows[0].id;
 
-    // --- PASO 5: ASIGNACIÓN FIFO INMEDIATA (CORREGIDO) ---
+    // --- ASIGNACIÓN FIFO (CORREGIDO) ---
     const findDriverQuery = `
       SELECT usuario_id FROM repartidores 
       WHERE is_active = 'activo' AND is_available = true AND tiene_pedido = false
@@ -93,19 +72,17 @@ export const createOrder = async (req, res) => {
     if (driverResult.rowCount > 0) {
       driverId = driverResult.rows[0].usuario_id;
 
-      // ✅ CORRECCIÓN: Actualizamos is_available Y tiene_pedido
+      // ✅ Actualizamos is_available Y tiene_pedido
       await client.query(
         "UPDATE repartidores SET is_available = false, tiene_pedido = true WHERE usuario_id = $1",
         [driverId]
       );
 
-      // Vincular pedido al repartidor
       await client.query(
         "UPDATE pedidos SET estado = 'asignado', repartidor_id = $1 WHERE id = $2",
         [driverId, newOrderId]
       );
 
-      // Insertar en historial
       await client.query(
         "INSERT INTO repartidores_pedidos (repartidor_id, pedido_id) VALUES ($1, $2)",
         [driverId, newOrderId]
@@ -114,12 +91,14 @@ export const createOrder = async (req, res) => {
 
     await client.query("COMMIT");
 
-    // --- PASO 6: NOTIFICACIÓN SOCKET ---
+    // --- NOTIFICACIÓN REAL-TIME ---
     if (driverId) {
       const io = req.app.get("socketio");
       const userQuery = await pool.query("SELECT nombre FROM usuarios WHERE id = $1", [clienteId]);
       const clienteNombre = userQuery.rows[0]?.nombre || "Cliente Nuevo";
-      const targetRoom = driverId.toString(); // Asegúrate de que coincida con socket.emit('join_driver_room', user.id)
+      
+      // La sala debe ser el ID del usuario como string
+      const targetRoom = driverId.toString();
 
       io.to(targetRoom).emit("NUEVO_PEDIDO", {
         pedido_id: newOrderId,
@@ -131,16 +110,11 @@ export const createOrder = async (req, res) => {
       });
     }
 
-    res.status(201).json({
-      message: "Pedido procesado y asignado.",
-      orderId: newOrderId,
-      repartidorAsignado: !!driverId
-    });
+    res.status(201).json({ orderId: newOrderId, repartidorAsignado: !!driverId });
 
   } catch (error) {
     if (client) await client.query("ROLLBACK");
-    console.error("❌ Error en createOrder:", error.message);
-    res.status(500).json({ error: "Error interno al crear el pedido." });
+    res.status(500).json({ error: error.message });
   } finally {
     client.release();
   }
