@@ -69,6 +69,7 @@ CREATE TABLE repartidores (
     foto VARCHAR(255),
     foto_vehiculo VARCHAR(255), 
     is_active VARCHAR(20) DEFAULT 'activo' CHECK (is_active IN ('activo','suspendido')),
+    tiene_pedido BOOLEAN DEFAULT false,
     
     -- Gestión de entregas (Cola Estática)
     is_available BOOLEAN DEFAULT FALSE,
