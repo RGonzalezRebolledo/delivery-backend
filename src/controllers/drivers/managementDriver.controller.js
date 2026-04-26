@@ -1,6 +1,7 @@
 import { pool } from '../../db.js';
 import { assignPendingOrders } from '../../services/assignmentServices.js'; 
 
+// 1. Cambiar Disponibilidad (Switch Manual)
 export const toggleAvailability = async (req, res) => {
     const { available } = req.body;
     const userId = req.userId;
@@ -25,32 +26,56 @@ export const toggleAvailability = async (req, res) => {
             isAvailable: result.rows[0]?.is_available 
         });
     } catch (error) {
-        console.error("Error en toggleAvailability:", error.message);
+        console.error("Error en toggleAvailability:", error);
         res.status(500).json({ success: false, error: error.message });
     }
 };
 
-// En repartidoresController.js
+// 2. Obtener estado actual (Para el F5 / Persistencia)
 export const getCurrentOrder = async (req, res) => {
     const userId = req.userId; 
     try {
-        const driverResult = await pool.query(
+        // Obtenemos datos del repartidor
+        const driverRes = await pool.query(
             `SELECT is_available, is_active, tiene_pedido FROM repartidores WHERE usuario_id = $1`, 
             [userId]
         );
         
-        // ... resto del código
-    } catch (error) {
-        console.error("CRITICAL ERROR en getCurrentOrder:", error.message);
-        // Enviamos una respuesta de error pero NO dejamos que el servidor muera
-        res.status(500).json({ 
-            success: false, 
-            message: "Error interno del servidor. Verifique si la columna tiene_pedido existe.",
-            error: error.message 
+        if (driverRes.rows.length === 0) {
+            return res.status(404).json({ success: false, message: "Repartidor no encontrado" });
+        }
+
+        const driver = driverRes.rows[0];
+
+        // Obtenemos pedido activo si existe
+        const orderQuery = `
+            SELECT p.id as pedido_id, p.total_dolar as monto, p.estado,
+                   u_c.nombre as cliente_nombre,
+                   dir_o.calle as recogida, dir_d.calle as entrega
+            FROM pedidos p
+            JOIN usuarios u_c ON p.cliente_id = u_c.id
+            JOIN direcciones dir_o ON p.direccion_origen_id = dir_o.id
+            JOIN direcciones dir_d ON p.direccion_destino_id = dir_d.id
+            WHERE p.repartidor_id = $1 
+              AND p.estado IN ('asignado', 'en_camino')
+            LIMIT 1;
+        `;
+        const orderResult = await pool.query(orderQuery, [userId]);
+        
+        res.json({
+            active: orderResult.rows.length > 0,
+            order: orderResult.rows[0] || null,
+            isAvailableInDB: driver.is_available,
+            tienePedido: driver.tiene_pedido, // Campo clave
+            status: driver.is_active 
         });
+    } catch (error) {
+        console.error("Error en getCurrentOrder:", error);
+        res.status(500).json({ error: error.message });
     }
 };
 
+// 3. Actualizar Estado del Pedido (Ruta / Entrega)
 export const updateOrderStatus = async (req, res) => {
     const { pedido_id, status } = req.body;
     const driverId = req.userId; 
@@ -62,12 +87,13 @@ export const updateOrderStatus = async (req, res) => {
         const cliente_id = pedidoResult.rows[0].cliente_id;
 
         if (status === 'entregado' || status === 'pendiente') {
+            // Caso: Conductor termina el pedido
             await pool.query(
                 `UPDATE pedidos SET estado = $1, fecha_entrega = CASE WHEN $1 = 'entregado' THEN NOW() ELSE NULL END WHERE id = $2`, 
                 [status, pedido_id]
             );
             
-            // Liberamos al repartidor en la tabla
+            // Liberación total: disponible para el sistema y sin pedido asignado
             await pool.query(
                 `UPDATE repartidores SET is_available = true, tiene_pedido = false WHERE usuario_id = $1`, 
                 [driverId]
@@ -76,8 +102,11 @@ export const updateOrderStatus = async (req, res) => {
         else if (status === 'en_camino') {
             await pool.query(`UPDATE pedidos SET estado = 'en_camino' WHERE id = $1`, [pedido_id]);
             
-            // Aseguramos que tiene_pedido sea true
-            await pool.query(`UPDATE repartidores SET tiene_pedido = true WHERE usuario_id = $1`, [driverId]);
+            // Sigue teniendo pedido, pero is_available false para que no le caigan otros
+            await pool.query(
+                `UPDATE repartidores SET tiene_pedido = true, is_available = false WHERE usuario_id = $1`, 
+                [driverId]
+            );
         }
 
         if (io) {
@@ -87,7 +116,7 @@ export const updateOrderStatus = async (req, res) => {
 
         res.json({ success: true });
     } catch (error) {
-        console.error("Error status:", error);
+        console.error("Error en updateOrderStatus:", error);
         res.status(500).json({ success: false, error: error.message });
     }
 };
