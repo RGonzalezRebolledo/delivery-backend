@@ -54,35 +54,33 @@ export const getCurrentOrder = async (req, res) => {
     }
 };
 
+// En tu controlador de driver
 export const completeOrder = async (req, res) => {
     const { pedidoId } = req.body;
     const userId = req.userId;
     const io = req.app.get('socketio');
-
-    const client = await pool.connect(); 
+    const client = await pool.connect();
 
     try {
         await client.query("BEGIN");
 
-        // 1. Finalizar el pedido actual
-        // Cambiamos a IN para ser más flexibles si el driver olvida marcar 'en camino'
+        // CAMBIO AQUÍ: Quitamos la restricción estricta de 'en_camino' 
+        // para asegurar que el repartidor SIEMPRE pueda liberarse si el pedido es suyo.
         const updateOrder = await client.query(
             `UPDATE pedidos 
              SET estado = 'entregado', fecha_entrega = NOW() 
-             WHERE id = $1 AND repartidor_id = $2 AND estado IN ('asignado', 'en_camino')
+             WHERE id = $1 AND repartidor_id = $2 AND estado != 'entregado'
              RETURNING id`, 
             [pedidoId, userId]
         );
 
         if (updateOrder.rowCount === 0) {
+            console.log(`⚠️ Intento de completar pedido #${pedidoId} fallido (no existe o ya entregado)`);
             await client.query("ROLLBACK");
-            return res.status(404).json({ 
-                success: false, 
-                message: "Pedido no encontrado o ya fue entregado." 
-            });
+            return res.status(404).json({ success: false, message: "No se pudo actualizar el pedido" });
         }
 
-        // 2. Liberar al repartidor
+        // LIBERAR AL REPARTIDOR
         const updateDriver = await client.query(
             `UPDATE repartidores 
              SET is_available = true, available_since = NOW() 
@@ -92,32 +90,19 @@ export const completeOrder = async (req, res) => {
         );
 
         await client.query("COMMIT");
-        console.log(`🏁 Pedido #${pedidoId} completado. Disponibilidad de driver ${userId}: ${updateDriver.rows[0].is_available}`);
+        
+        // LOG CRÍTICO PARA DEBUG
+        console.log(`✅ EXITO: Pedido #${pedidoId} finalizado. Driver ${userId} ahora está LIBRE.`);
 
-        // 3. Notificar al cliente inmediatamente vía Socket
         if (io) {
-            // Buscamos el cliente_id de este pedido para avisarle
-            const customerRes = await pool.query("SELECT cliente_id FROM pedidos WHERE id = $1", [pedidoId]);
-            if (customerRes.rowCount > 0) {
-                const clienteId = customerRes.rows[0].cliente_id;
-                io.to(clienteId.toString()).emit('ORDEN_ACTUALIZADA', {
-                    pedido_id: pedidoId,
-                    nuevo_estado: 'entregado'
-                });
-            }
-
-            // 4. Intentar asignar pedidos pendientes al conductor que acaba de quedar libre
-            assignPendingOrders(io);
+            assignPendingOrders(io); // Intentar asignar nuevos pedidos
         }
 
-        res.json({ 
-            success: true, 
-            message: 'Entrega confirmada con éxito.' 
-        });
+        res.json({ success: true, isAvailable: true });
 
     } catch (error) {
         await client.query("ROLLBACK");
-        console.error("🔥 Error en completeOrder:", error.message);
+        console.error("🔥 Error grave en completeOrder:", error.message);
         res.status(500).json({ success: false, error: error.message });
     } finally {
         client.release();
