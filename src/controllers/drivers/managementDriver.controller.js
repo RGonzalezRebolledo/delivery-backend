@@ -1,4 +1,5 @@
-import { pool } from '../../db.js';
+import { pool } from '../../db.js'; 
+// IMPORTANTE: Verifica si assignmentServices.js está realmente en esa ruta
 import { assignPendingOrders } from '../../services/assignmentServices.js'; 
 
 // 1. Cambiar Disponibilidad (Switch Manual)
@@ -31,7 +32,7 @@ export const toggleAvailability = async (req, res) => {
     }
 };
 
-// 2. Obtener estado actual (Para el F5 / Persistencia)
+// 2. Obtener estado actual (Sincronización para F5)
 export const getCurrentOrder = async (req, res) => {
     const userId = req.userId; 
     try {
@@ -47,7 +48,7 @@ export const getCurrentOrder = async (req, res) => {
 
         const driver = driverRes.rows[0];
 
-        // Obtenemos pedido activo si existe
+        // Obtenemos pedido activo (asignado o en camino)
         const orderQuery = `
             SELECT p.id as pedido_id, p.total_dolar as monto, p.estado,
                    u_c.nombre as cliente_nombre,
@@ -66,7 +67,7 @@ export const getCurrentOrder = async (req, res) => {
             active: orderResult.rows.length > 0,
             order: orderResult.rows[0] || null,
             isAvailableInDB: driver.is_available,
-            tienePedido: driver.tiene_pedido, // Campo clave
+            tiene_pedido: driver.tiene_pedido, // <-- Usamos guion bajo para ser consistentes con la DB
             status: driver.is_active 
         });
     } catch (error) {
@@ -75,7 +76,7 @@ export const getCurrentOrder = async (req, res) => {
     }
 };
 
-// 3. Actualizar Estado del Pedido (Ruta / Entrega)
+// 3. Actualizar Estado del Pedido
 export const updateOrderStatus = async (req, res) => {
     const { pedido_id, status } = req.body;
     const driverId = req.userId; 
@@ -87,13 +88,13 @@ export const updateOrderStatus = async (req, res) => {
         const cliente_id = pedidoResult.rows[0].cliente_id;
 
         if (status === 'entregado' || status === 'pendiente') {
-            // Caso: Conductor termina el pedido
+            // Finalizar pedido
             await pool.query(
                 `UPDATE pedidos SET estado = $1, fecha_entrega = CASE WHEN $1 = 'entregado' THEN NOW() ELSE NULL END WHERE id = $2`, 
                 [status, pedido_id]
             );
             
-            // Liberación total: disponible para el sistema y sin pedido asignado
+            // Liberar al repartidor: disponible y sin pedido
             await pool.query(
                 `UPDATE repartidores SET is_available = true, tiene_pedido = false WHERE usuario_id = $1`, 
                 [driverId]
@@ -102,7 +103,7 @@ export const updateOrderStatus = async (req, res) => {
         else if (status === 'en_camino') {
             await pool.query(`UPDATE pedidos SET estado = 'en_camino' WHERE id = $1`, [pedido_id]);
             
-            // Sigue teniendo pedido, pero is_available false para que no le caigan otros
+            // Marcar que tiene pedido pero no está disponible para nuevos envíos
             await pool.query(
                 `UPDATE repartidores SET tiene_pedido = true, is_available = false WHERE usuario_id = $1`, 
                 [driverId]
