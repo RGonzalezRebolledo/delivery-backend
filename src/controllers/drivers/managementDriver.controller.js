@@ -61,27 +61,26 @@ export const completeOrder = async (req, res) => {
     const io = req.app.get('socketio');
     const client = await pool.connect();
 
+    console.log(`--- INTENTO DE COMPLETAR PEDIDO ---`);
+    console.log(`Driver ID: ${userId} | Pedido ID: ${pedidoId}`);
+
     try {
         await client.query("BEGIN");
 
-        // CAMBIO AQUÍ: Quitamos la restricción estricta de 'en_camino' 
-        // para asegurar que el repartidor SIEMPRE pueda liberarse si el pedido es suyo.
-        const updateOrder = await client.query(
+        // 1. Forzamos la actualización del pedido sin importar el estado previo
+        // Solo verificamos que el pedido sea de este repartidor
+        const orderRes = await client.query(
             `UPDATE pedidos 
              SET estado = 'entregado', fecha_entrega = NOW() 
-             WHERE id = $1 AND repartidor_id = $2 AND estado != 'entregado'
-             RETURNING id`, 
+             WHERE id = $1 AND repartidor_id = $2
+             RETURNING id, estado`, 
             [pedidoId, userId]
         );
 
-        if (updateOrder.rowCount === 0) {
-            console.log(`⚠️ Intento de completar pedido #${pedidoId} fallido (no existe o ya entregado)`);
-            await client.query("ROLLBACK");
-            return res.status(404).json({ success: false, message: "No se pudo actualizar el pedido" });
-        }
+        console.log(`Resultado Pedido: ${orderRes.rowCount > 0 ? 'EXITO' : 'FALLO - No encontrado o no es del driver'}`);
 
-        // LIBERAR AL REPARTIDOR
-        const updateDriver = await client.query(
+        // 2. FORZAMOS la disponibilidad del repartidor
+        const driverRes = await client.query(
             `UPDATE repartidores 
              SET is_available = true, available_since = NOW() 
              WHERE usuario_id = $1
@@ -89,20 +88,21 @@ export const completeOrder = async (req, res) => {
             [userId]
         );
 
+        console.log(`Resultado Disponibilidad Driver: ${driverRes.rowCount > 0 ? 'EXITO' : 'FALLO - No existe el registro en la tabla repartidores'}`);
+
         await client.query("COMMIT");
-        
-        // LOG CRÍTICO PARA DEBUG
-        console.log(`✅ EXITO: Pedido #${pedidoId} finalizado. Driver ${userId} ahora está LIBRE.`);
 
-        if (io) {
-            assignPendingOrders(io); // Intentar asignar nuevos pedidos
+        if (orderRes.rowCount > 0 && driverRes.rowCount > 0) {
+            console.log(`✅ DISPONIBILIDAD ACTIVADA PARA DRIVER ${userId}`);
+            if (io) assignPendingOrders(io);
+            return res.json({ success: true, message: "Ahora estás disponible" });
+        } else {
+            throw new Error("No se pudo actualizar una de las tablas");
         }
-
-        res.json({ success: true, isAvailable: true });
 
     } catch (error) {
         await client.query("ROLLBACK");
-        console.error("🔥 Error grave en completeOrder:", error.message);
+        console.error("🔥 ERROR EN COMPLETE_ORDER:", error.message);
         res.status(500).json({ success: false, error: error.message });
     } finally {
         client.release();
