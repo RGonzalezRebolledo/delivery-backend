@@ -1,11 +1,14 @@
 import { pool } from '../db.js';
-
 export const assignPendingOrders = async (io) => {
     if (!io) return;
 
+    // Declaramos el cliente fuera para que el finally tenga acceso
     const client = await pool.connect();
     
     try {
+        // Iniciamos la transacción al principio de todo el proceso de escritura
+        await client.query('BEGIN');
+
         // 1. Buscamos el pedido pendiente más antiguo (Bloqueo estricto)
         const orderRes = await client.query(`
             SELECT p.id, p.total_dolar as monto, u.nombre as cliente_nombre,
@@ -20,7 +23,10 @@ export const assignPendingOrders = async (io) => {
             FOR UPDATE SKIP LOCKED;
         `);
 
-        if (orderRes.rows.length === 0) return; // No hay nada más que hacer
+        if (orderRes.rows.length === 0) {
+            await client.query('COMMIT'); // Nada que hacer, cerramos transacción
+            return; 
+        }
 
         const pedido = orderRes.rows[0];
 
@@ -43,13 +49,13 @@ export const assignPendingOrders = async (io) => {
         }
 
         if (selectedDriverId) {
-            await client.query('BEGIN');
-            
+            // Actualizamos pedido
             await client.query(
                 "UPDATE pedidos SET repartidor_id = $1, estado = 'asignado' WHERE id = $2",
                 [selectedDriverId, pedido.id]
             );
 
+            // Actualizamos disponibilidad del repartidor
             await client.query(
                 "UPDATE repartidores SET is_available = false WHERE usuario_id = $1",
                 [selectedDriverId]
@@ -57,7 +63,7 @@ export const assignPendingOrders = async (io) => {
 
             await client.query('COMMIT');
 
-            // Notificación inmediata
+            // Notificación vía Socket
             io.to(`driver_${selectedDriverId}`).emit('NUEVO_PEDIDO', {
                 pedido_id: pedido.id,
                 monto: pedido.monto,
@@ -69,19 +75,27 @@ export const assignPendingOrders = async (io) => {
 
             console.log(`✅ Pedido #${pedido.id} asignado a ${selectedDriverId}`);
 
-            // ⚡️ RECURSIVIDAD: Si asignamos uno con éxito, llamamos a la función otra vez
-            // para ver si hay más pedidos pendientes para otros conductores.
-            client.release(); // Liberamos esta conexión antes de la siguiente llamada
+            // IMPORTANTE: Liberamos la conexión ANTES de la recursividad
+            client.release();
+            
+            // Llamada recursiva para procesar el siguiente pedido en cola
             return assignPendingOrders(io); 
         } else {
+            // Si no hay conductores, cancelamos la transacción (no hubo cambios) y salimos
+            await client.query('ROLLBACK');
             console.log(`⏳ Pedido #${pedido.id} en espera de conductores conectados.`);
         }
 
     } catch (error) {
-        if (client) await client.query('ROLLBACK');
+        // Solo intentamos rollback si la conexión sigue viva
+        try { await client.query('ROLLBACK'); } catch (e) { /* silent */ }
         console.error("❌ Error en asignación:", error.message);
     } finally {
-        if (client.release) client.release();
+        // El seguro definitivo: Si el cliente sigue asignado, se libera.
+        // Verificamos _pool.totalCount para evitar el error de "doble release"
+        if (client && client.release && client._connected) {
+            client.release();
+        }
     }
 };
 // ✅ AHORA RECIBE excludeId PARA REFORZAR LA EXCLUSIÓN
