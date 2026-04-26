@@ -73,15 +73,33 @@ io.on('connection', (socket) => {
     });
 
     // Unirse a sala de Cliente
-    socket.on('join_client_room', (usuario_id) => {
+    // socket.on('join_client_room', (usuario_id) => {
+    //     if (usuario_id) {
+    //         const room = usuario_id.toString();
+    //         socket.join(room);
+    //         console.log(`👤 Cliente ${usuario_id} unido a canal de seguimiento: ${room}`);
+    //         socket.emit('client_room_joined', room);
+    //     }
+    // });
+    
+    socket.on('join_driver_room', (usuario_id) => {
         if (usuario_id) {
-            const room = usuario_id.toString();
+            const room = `driver_${usuario_id}`;
+            socket.userId = usuario_id; 
+
+            // Limpiar salas viejas para evitar duplicados
+            socket.rooms.forEach(r => { 
+                if(r !== socket.id) socket.leave(r); 
+            });
+
             socket.join(room);
-            console.log(`👤 Cliente ${usuario_id} unido a canal de seguimiento: ${room}`);
-            socket.emit('client_room_joined', room);
+            console.log(`✅ Repartidor ${usuario_id} activo.`);
+            
+            // ⚡️ IMPORTANTE: Cuando el driver reconecta (F5), 
+            // forzamos una revisión de pedidos pendientes.
+            assignPendingOrders(io);
         }
     });
-
     // ⚡️ ACTUALIZACIÓN: Liberación automática por desconexión
     socket.on('disconnect', async (reason) => {
         console.log(`❌ Conexión cerrada (${socket.id}):`, reason);

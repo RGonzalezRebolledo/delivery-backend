@@ -57,14 +57,67 @@ export const getCurrentOrder = async (req, res) => {
 export const completeOrder = async (req, res) => {
     const { pedidoId } = req.body;
     const userId = req.userId;
+    const io = req.app.get('socketio');
+
+    const client = await pool.connect(); // Usamos un cliente específico para la transacción
+
     try {
-        await pool.query("UPDATE pedidos SET estado = 'entregado', fecha_entrega = NOW() WHERE id = $1 AND repartidor_id = $2", [pedidoId, userId]);
-        await pool.query("UPDATE repartidores SET is_available = true WHERE usuario_id = $1", [userId]);
-        res.json({ success: true, message: 'Pedido entregado' });
+        await client.query("BEGIN");
+
+        // 1. Finalizar el pedido actual (Seguridad: verificamos que sea del repartidor)
+        const updateOrder = await client.query(
+            `UPDATE pedidos 
+             SET estado = 'entregado', fecha_entrega = NOW() 
+             WHERE id = $1 AND repartidor_id = $2 AND estado = 'en_camino'
+             RETURNING id`, 
+            [pedidoId, userId]
+        );
+
+        if (updateOrder.rowCount === 0) {
+            await client.query("ROLLBACK");
+            return res.status(404).json({ 
+                success: false, 
+                message: "Pedido no encontrado o no está en estado 'en_camino'" 
+            });
+        }
+
+        // 2. Liberar al repartidor inmediatamente
+        await client.query(
+            `UPDATE repartidores 
+             SET is_available = true, available_since = NOW() 
+             WHERE usuario_id = $1`, 
+            [userId]
+        );
+
+        await client.query("COMMIT");
+
+        console.log(`🏁 Pedido #${pedidoId} completado por repartidor ${userId}`);
+
+        /**
+         * ⚡️ EL GATILLO CRÍTICO:
+         * En lugar de esperar al setInterval de 30 segundos, llamamos al servicio
+         * de asignación justo ahora que sabemos que un conductor quedó libre.
+         */
+        if (io) {
+            // Lo ejecutamos sin 'await' para no bloquear la respuesta al cliente
+            assignPendingOrders(io);
+        }
+
+        res.json({ 
+            success: true, 
+            message: 'Pedido entregado correctamente. Ahora estás disponible para nuevos pedidos.' 
+        });
+
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        await client.query("ROLLBACK");
+        console.error("🔥 Error en completeOrder:", error.message);
+        res.status(500).json({ success: false, error: error.message });
+    } finally {
+        client.release();
     }
 };
+
+
 
 export const updateOrderStatus = async (req, res) => {
     const { pedido_id, status } = req.body;
@@ -86,10 +139,11 @@ export const updateOrderStatus = async (req, res) => {
 
         if (status === 'pendiente') {
             /**
-             * ⚡️ LÓGICA DE RECHAZO (Rompe el bucle de reasignación)
+             * ⚡️ LÓGICA DE RECHAZO CORREGIDA
+             * El conductor rechaza, pero se mantiene disponible para OTROS pedidos.
              */
             
-            // A. Liberamos el pedido: quitamos al repartidor y lo volvemos a poner pendiente
+            // A. Liberamos el pedido: lo devolvemos a la cola general
             await pool.query(
                 `UPDATE pedidos 
                  SET estado = 'pendiente', 
@@ -98,29 +152,30 @@ export const updateOrderStatus = async (req, res) => {
                 [pedido_id]
             );
             
-            // B. DESACTIVAMOS al repartidor (is_available = false)
-            // Esto evita que el sistema se lo asigne otra vez en el siguiente segundo.
-            // El conductor deberá activar su switch manualmente si desea volver a trabajar.
+            // B. MANTENER AL REPARTIDOR DISPONIBLE
+            // Seteamos is_available = true y reiniciamos available_since para que
+            // el sistema lo ponga al final de la lista de prioridad (FIFO).
             await pool.query(
                 `UPDATE repartidores 
-                 SET is_available = false, 
-                     available_since = NULL 
+                 SET is_available = true, 
+                     available_since = NOW() 
                  WHERE usuario_id = $1`, 
                 [driverId]
             );
 
-            // C. Limpiamos la tabla intermedia para este conductor y este pedido
+            // C. Registrar el rechazo (opcional, para que el motor sepa que este ya lo rechazó)
             await pool.query(
-                `DELETE FROM repartidores_pedidos 
-                 WHERE pedido_id = $1 AND repartidor_id = $2`,
+                `INSERT INTO repartidores_pedidos (pedido_id, repartidor_id, fecha_asignacion)
+                 VALUES ($1, $2, NOW())
+                 ON CONFLICT (pedido_id, repartidor_id) DO NOTHING`,
                 [pedido_id, driverId]
             );
 
-            console.log(`🚫 Conductor ${driverId} rechazó pedido #${pedido_id}. Disponibilidad: OFF.`);
+            console.log(`⚠️ Conductor ${driverId} rechazó pedido #${pedido_id} pero sigue disponible.`);
 
         } else {
             /**
-             * ✅ LÓGICA DE CAMBIO DE ESTADO NORMAL (Aceptar/En Camino/etc)
+             * ✅ LÓGICA DE CAMBIO DE ESTADO NORMAL
              */
             await pool.query(
                 `UPDATE pedidos SET estado = $1 WHERE id = $2`, 
@@ -128,24 +183,23 @@ export const updateOrderStatus = async (req, res) => {
             );
         }
 
-        // 2. Notificaciones por Socket
+        // 2. Notificaciones y Reasignación
         if (io) {
-            // Avisar al cliente que su pedido cambió de estado (o volvió a pendiente)
+            // Notificar al cliente
             io.to(cliente_id.toString()).emit('ORDEN_ACTUALIZADA', {
                 pedido_id: parseInt(pedido_id),
                 nuevo_estado: status
             });
 
-            // Si fue rechazo, disparamos la reasignación para que lo vea OTRO conductor
-            // Como este conductor ya está en 'is_available = false', el sistema lo saltará.
+            // Si fue rechazo, buscamos inmediatamente a OTRO conductor para este pedido
             if (status === 'pendiente') {
-                assignPendingOrders(io, driverId);
+                assignPendingOrders(io);
             }
         }
 
         res.json({ 
             success: true, 
-            message: status === 'pendiente' ? "Pedido liberado y disponibilidad desactivada" : "Estado actualizado" 
+            message: status === 'pendiente' ? "Pedido liberado, sigues en línea para otros pedidos" : "Estado actualizado" 
         });
 
     } catch (error) {
@@ -153,6 +207,7 @@ export const updateOrderStatus = async (req, res) => {
         res.status(500).json({ success: false, error: error.message });
     }
 };
+
 // import { pool } from '../../db.js';
 // import { assignPendingOrders } from '../../services/assignmentServices.js'; 
 
