@@ -1,4 +1,5 @@
 // En tu archivo de rutas o controlador de clientes
+import pool from '../db.js';
 export const getDriverByOrder = async (req, res) => {
     const { pedidoId } = req.params;
 
