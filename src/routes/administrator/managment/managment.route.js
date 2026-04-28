@@ -6,7 +6,7 @@ import { Router } from "express";
 import { getAdminClients, 
     getAdminActiveOrders, 
     getAdminDriversStatus
- } from '../../../controllers/administrator/managment/adminManagment';
+ } from '../../../controllers/administrator/managment/adminManagment.js';
 // Middleware de autenticación (ejemplo de lo que deberías tener)
 // import { verifyToken, isAdmin } from '../middleware/authMiddleware.js';
 const routerAdminManagment = Router();
