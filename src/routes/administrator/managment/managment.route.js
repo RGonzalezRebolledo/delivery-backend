@@ -9,6 +9,7 @@ import { getAdminClients,
  } from '../../../controllers/administrator/managment/adminManagment.js';
 // Middleware de autenticación (ejemplo de lo que deberías tener)
 // import { verifyToken, isAdmin } from '../middleware/authMiddleware.js';
+import { verifyToken } from "../middlewares/verifyToken.js";
 const routerAdminManagment = Router();
 // --- RUTAS DEL MÓDULO ADMINISTRATIVO ---
 
