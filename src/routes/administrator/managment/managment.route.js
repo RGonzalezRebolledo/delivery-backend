@@ -1,6 +1,6 @@
 
-import express from 'express';
-const routerAdminManagment = express.Router();
+import { Router } from "express";
+
 
 // Importamos los controladores (asumiendo el archivo anterior)
 import { getAdminClients, 
@@ -9,7 +9,7 @@ import { getAdminClients,
  } from '../../../controllers/administrator/managment/adminManagment';
 // Middleware de autenticación (ejemplo de lo que deberías tener)
 // import { verifyToken, isAdmin } from '../middleware/authMiddleware.js';
-
+const routerAdminManagment = Router();
 // --- RUTAS DEL MÓDULO ADMINISTRATIVO ---
 
 // 1. Obtener todos los usuarios tipo 'cliente'
