@@ -27,6 +27,7 @@ import routerDriverGetDrivers from './routes/driver/driver.route.js';
 import routerDriverRegisterModal from './routes/driver/driverRegisterModal.route.js';
 import routerDriverManagement from './routes/driver/driverManagement.route.js';
 import routerGetDriverByOrder from './routes/client/newOrderDriver.route.js';
+import routerAdminManagment from './routes/administrator/managment/managment.route.js'
 
 const app = express();
 const httpServer = createServer(app);
@@ -151,6 +152,7 @@ app.use(routerDriverGetDrivers);
 app.use(routerDriverRegisterModal);
 app.use(routerDriverManagement);
 app.use(routerGetDriverByOrder);
+app.use (routerAdminManagment)
 
 // --- MANEJO DE ERRORES GLOBAL ---
 app.use((err, req, res, next) => {

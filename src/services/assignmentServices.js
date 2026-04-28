@@ -55,8 +55,12 @@ export const assignPendingOrders = async (io) => {
         }
 
         if (selectedDriverId) {
+            // await client.query(
+            //     "UPDATE pedidos SET repartidor_id = $1, estado = 'asignado' WHERE id = $2",
+            //     [selectedDriverId, pedido.id]
+            // );
             await client.query(
-                "UPDATE pedidos SET repartidor_id = $1, estado = 'asignado' WHERE id = $2",
+                "UPDATE pedidos SET repartidor_id = $1, estado = 'asignado' WHERE id = $2 AND estado = 'pendiente'",
                 [selectedDriverId, pedido.id]
             );
 
