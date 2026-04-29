@@ -5,6 +5,6 @@ import { getAvailableDrivers } from "../../../../controllers/drivers/driverAvail
 
 const routerAvailableDrivers = Router();
 
-routerAvailableDrivers .get('managment/drivers/available', verifyToken, getAvailableDrivers);
+routerAvailableDrivers .get('/managment/drivers/available', verifyToken, getAvailableDrivers);
 
 export default routerAvailableDrivers;
