@@ -3,8 +3,8 @@ import { verifyToken } from "../../middlewares/verifyToken.js";
 import { getAvailableDrivers } from "../../../../controllers/drivers/driverAvailableDrivers.controller.js";
 
 
-const routerAvailableDrivers = Router();
+const routerActiveDrivers = Router();
 
-routerAvailableDrivers.get('/managment/drivers/available', verifyToken, getAvailableDrivers);
+routerActiveDrivers.get('/managment/drivers/available', verifyToken, getAvailableDrivers);
 
-export default routerAvailableDrivers;
+export default routerActiveDrivers;
