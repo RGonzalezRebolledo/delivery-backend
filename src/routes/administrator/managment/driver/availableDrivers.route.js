@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { verifyToken } from "../../middlewares/verifyToken.js";
+import { verifyToken } from "../../../middlewares/verifyToken.js";
 import { getAvailableDrivers } from "../../../../controllers/drivers/driverAvailableDrivers.controller.js";
 
 
