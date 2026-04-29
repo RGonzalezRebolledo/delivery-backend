@@ -17,12 +17,15 @@ export const getAvailableDrivers = async (req, res) => {
             INNER JOIN tipos_vehiculos tv ON r.tipo_vehiculo_id = tv.id
             WHERE u.tipo = 'repartidor' 
               AND r.is_available = TRUE 
-              AND r.is_active = 'activo' -- Verifica que en DB sea exactamente 'activo' (minúsculas)
-              AND r.tiene_pedido = FALSE -- Opcional: No mostrar si ya está ocupado aunque esté disponible
-            ORDER BY r.available_since ASC
+              AND LOWER(r.is_active) = 'activo'
+              AND r.tiene_pedido = FALSE
+            -- El que tiene la fecha más vieja (ASC) es el que lleva más tiempo esperando
+            ORDER BY r.available_since ASC NULLS LAST
         `;
         
         const result = await pool.query(query);
+        
+        // Enviamos la lista ya ordenada al Front
         res.json(result.rows);
 
     } catch (err) {
