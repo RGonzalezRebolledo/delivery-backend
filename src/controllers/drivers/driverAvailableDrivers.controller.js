@@ -17,7 +17,8 @@ export const getAvailableDrivers = async (req, res) => {
             INNER JOIN tipos_vehiculos tv ON r.tipo_vehiculo_id = tv.id
             WHERE u.tipo = 'repartidor' 
               AND r.is_available = TRUE 
-              AND r.is_active = 'activo'
+              AND r.is_active = 'activo' -- Verifica que en DB sea exactamente 'activo' (minúsculas)
+              AND r.tiene_pedido = FALSE -- Opcional: No mostrar si ya está ocupado aunque esté disponible
             ORDER BY r.available_since ASC
         `;
         
@@ -25,7 +26,7 @@ export const getAvailableDrivers = async (req, res) => {
         res.json(result.rows);
 
     } catch (err) {
-        console.error("🔥 ERROR ADMIN GET_AVAILABLE_DRIVERS:", err.message);
-        res.status(500).json({ error: "Error al obtener conductores disponibles" });
+        console.error("🔥 ERROR EN GET_AVAILABLE_DRIVERS:", err.message);
+        res.status(500).json({ error: "Error interno del servidor" });
     }
 };
