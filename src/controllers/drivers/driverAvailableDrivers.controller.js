@@ -20,7 +20,7 @@ export const getAvailableDrivers = async (req, res) => {
               AND LOWER(r.is_active) = 'activo'
               AND r.tiene_pedido = FALSE
             -- El que tiene la fecha más vieja (ASC) es el que lleva más tiempo esperando
-            ORDER BY r.available_since DESC NULLS LAST
+            ORDER BY r.available_since ASC NULLS LAST
         `;
         
         const result = await pool.query(query);
