@@ -1,11 +1,12 @@
-import { pool } from '../../db.js';
+import { pool } from "../../db.js";
 
 export const getAvailableDrivers = async (req, res) => {
-    try {
-        const query = `
+  try {
+    const query = `
             SELECT 
                 u.id AS usuario_id, 
-                u.nombre, 
+                u.nombre,
+                u.email,
                 u.telefono,
                 r.id AS repartidor_id,
                 r.is_active,
@@ -22,14 +23,13 @@ export const getAvailableDrivers = async (req, res) => {
             -- El que tiene la fecha más vieja (ASC) es el que lleva más tiempo esperando
             ORDER BY r.available_since ASC NULLS LAST
         `;
-        
-        const result = await pool.query(query);
-        
-        // Enviamos la lista ya ordenada al Front
-        res.json(result.rows);
 
-    } catch (err) {
-        console.error("🔥 ERROR EN GET_AVAILABLE_DRIVERS:", err.message);
-        res.status(500).json({ error: "Error interno del servidor" });
-    }
+    const result = await pool.query(query);
+
+    // Enviamos la lista ya ordenada al Front
+    res.json(result.rows);
+  } catch (err) {
+    console.error("🔥 ERROR EN GET_AVAILABLE_DRIVERS:", err.message);
+    res.status(500).json({ error: "Error interno del servidor" });
+  }
 };
