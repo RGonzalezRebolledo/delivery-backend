@@ -11,8 +11,7 @@ export const activateDriver = async (req, res) => {
     }
 
     try {
-        // 1. Verificamos si el repartidor tiene pedidos activos actualmente
-        // Buscamos pedidos asociados al usuario_id que no estén entregados ni finalizados
+        // 1. Verificamos si tiene pedidos en curso
         const activeOrderCheck = await pool.query(
             `SELECT id FROM pedidos 
              WHERE repartidor_id = $1 
@@ -23,48 +22,45 @@ export const activateDriver = async (req, res) => {
 
         const hasActiveOrder = activeOrderCheck.rowCount > 0;
 
-        // 2. Ejecutamos la actualización condicional
-        // Si tiene pedido: is_available = false (no puede recibir otro)
-        // Si NO tiene pedido: is_available = true (entra en la cola FIFO)
+        // 2. Actualizamos con la lógica correcta:
+        // is_available: Solo true si NO tiene pedidos (para no asignarle otro).
+        // tiene_pedido: DEBE SER TRUE si encontramos un pedido en el paso 1.
         const query = `
             UPDATE repartidores 
             SET is_active = 'activo', 
-                is_available = $2,
+                is_available = $2, 
+                tiene_pedido = $3, 
                 available_since = CASE 
                     WHEN $2 = true THEN timezone('America/Caracas', CURRENT_TIMESTAMP) 
                     ELSE available_since 
-                END,
-                tiene_pedido = $2 -- Sincronizamos también esta bandera por seguridad
+                END
             WHERE usuario_id = $1 
             RETURNING *;
         `;
         
-        const result = await pool.query(query, [usuario_id, !hasActiveOrder]);
+        // Explicación de parámetros:
+        // $2 (is_available) -> !hasActiveOrder (Si tiene pedido, no está disponible para nuevos)
+        // $3 (tiene_pedido) -> hasActiveOrder  (Si tiene pedido, marcamos que tiene uno)
+        const result = await pool.query(query, [usuario_id, !hasActiveOrder, hasActiveOrder]);
 
         if (result.rowCount === 0) {
             return res.status(404).json({ 
                 success: false, 
-                error: 'No se encontró el registro del repartidor para este usuario.' 
+                error: 'No se encontró el registro del repartidor.' 
             });
         }
-
-        const driverData = result.rows[0];
 
         res.json({
             success: true,
             message: hasActiveOrder 
-                ? 'Conductor activado. Se mantiene NO DISPONIBLE porque tiene un pedido en curso.' 
-                : 'Conductor activado y posicionado en la cola FIFO.',
-            data: driverData,
-            hasActiveOrder // Enviamos esta bandera al frontend por si quieres mostrar un aviso
+                ? 'Conductor activado. El pedido actual debería aparecer en su panel.' 
+                : 'Conductor activado y disponible para recibir pedidos.',
+            data: result.rows[0]
         });
 
     } catch (error) {
         console.error('Error al activar conductor:', error);
-        res.status(500).json({ 
-            success: false, 
-            error: 'Error interno al intentar activar al conductor.' 
-        });
+        res.status(500).json({ success: false, error: 'Error interno.' });
     }
 };
 
