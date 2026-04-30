@@ -38,7 +38,8 @@ const httpServer = createServer(app);
 const allowedOrigins = [
     'http://localhost:5173',
     'http://localhost:5174',
-    'https://deliveryaplication-ioll.vercel.app'
+    'https://deliveryaplication-ioll.vercel.app',
+    'https://deliveryadmin.vercel.app'
 ];
 
 app.use(cors({
