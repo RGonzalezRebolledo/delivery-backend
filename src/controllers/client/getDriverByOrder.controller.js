@@ -7,7 +7,8 @@ export const getDriverByOrder = async (req, res) => {
         const query = `
             SELECT 
                 u.nombre, 
-                u.telefono, 
+                u.telefono,
+                r.usuario_id,
                 r.foto, 
                 r.foto_vehiculo,
                 p.estado
