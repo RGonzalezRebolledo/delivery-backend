@@ -117,34 +117,55 @@ export const createOrder = async (req, res) => {
     await client.query("COMMIT");
 
     // --- PASO 6: NOTIFICACIÓN SOCKET (VERSION QUE TE FUNCIONA) ---
-  if (driverId) {
-    const io = req.app.get("socketio");
-    
-    // Consultamos el nombre del cliente Y el nombre del servicio para el socket
+// --- PASO 6: NOTIFICACIÓN SOCKET (CON DATOS DE TU BD) ---
+if (driverId) {
+  const io = req.app.get("socketio");
+
+  try {
+    // Consultamos los nombres usando exactamente tus tablas: 'usuarios' y 'tipos_servicios'
     const infoQuery = await client.query(`
-      SELECT u.nombre as cliente_nombre, ts.descript as servicio_nombre
-      FROM usuarios u, tipos_servicio ts
-      WHERE u.id = $1 AND ts.id = $2
+      SELECT 
+        (SELECT nombre FROM usuarios WHERE id = $1) as cliente_nombre,
+        (SELECT descript FROM tipos_servicios WHERE id = $2) as servicio_nombre
     `, [clienteId, typeservice]);
 
     const info = infoQuery.rows[0];
-
     const targetRoom = `driver_${driverId}`;
 
-    io.to(targetRoom).emit("NUEVO_PEDIDO", {
+    // Construimos el objeto para el Frontend
+    const payload = {
       pedido_id: newOrderId,
-      monto_usd: price_usd,      // Nombre unificado
-      monto_bs: price,           // Enviamos ambos de una vez
+      monto_usd: price_usd,                     
+      monto_bs: price,                         
       cliente_nombre: info?.cliente_nombre || "Cliente Nuevo",
-      cliente_telefono: payerPhone, // IMPORTANTE: Agregamos el teléfono
-      tipo_servicio: info?.servicio_nombre || "SERVICIO", // ¡ESTO ES LO QUE FALTABA!
+      cliente_telefono: payerPhone,            
+      tipo_servicio: info?.servicio_nombre || "SERVICIO", 
+      recogida: pickup,
+      entrega: delivery,
+      estado: 'asignado'
+    };
+
+    io.to(targetRoom).emit("NUEVO_PEDIDO", payload);
+
+    console.log(`✅ Socket enviado a sala: ${targetRoom} | Pedido: #${newOrderId} | Servicio: ${info?.servicio_nombre}`);
+
+  } catch (socketError) {
+    console.error("⚠️ Error al obtener nombres para el socket:", socketError.message);
+    
+    // Fallback: Si la consulta falla, enviamos el socket con datos básicos para no bloquear al driver
+    req.app.get("socketio").to(`driver_${driverId}`).emit("NUEVO_PEDIDO", {
+      pedido_id: newOrderId,
+      monto_usd: price_usd,
+      monto_bs: price,
+      cliente_nombre: "Nuevo Pedido",
+      cliente_telefono: payerPhone,
+      tipo_servicio: "DELIVERY",
       recogida: pickup,
       entrega: delivery,
       estado: 'asignado'
     });
-
-    console.log(`✅ Socket enviado a sala: ${targetRoom} con datos completos.`);
   }
+}
 
     res.status(201).json({
       message: "Pedido procesado y asignado.",
