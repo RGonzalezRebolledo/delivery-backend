@@ -81,59 +81,68 @@ export const toggleAvailability = async (req, res) => {
 //   };
 
 export const getCurrentOrder = async (req, res) => {
-  const userId = req.userId;
+  const usuarioId = req.userId; // ID que viene del middleware de sesión
+
   try {
-    const driverRes = await pool.query(
-      `SELECT is_available, is_active, tiene_pedido FROM repartidores WHERE usuario_id = $1`,
-      [userId]
+    // 1. Verificar primero si existe en la tabla repartidores y su estado
+    const driverQuery = await pool.query(
+      "SELECT is_active, is_available FROM repartidores WHERE usuario_id = $1",
+      [usuarioId]
     );
 
-    if (driverRes.rows.length === 0) {
-      return res.status(404).json({ success: false, message: "Repartidor no encontrado" });
+    if (driverQuery.rowCount === 0) {
+      // Si no existe en la tabla repartidores, el Dashboard mostrará "Cuenta en revisión"
+      return res.status(200).json({ 
+        driverStatus: 'no_registrado', 
+        active: false 
+      });
     }
 
-    // Query mejorada con JOINs para teléfono y descripción de servicio
-    const orderQuery = `
-            SELECT 
-              p.id as pedido_id, 
-              p.total_dolar as monto_usd, 
-              p.total as monto_bs, 
-              p.estado,
-              u_c.nombre as cliente_nombre,
-              u_c.telefono as cliente_telefono,
-              ts.descript as tipo_servicio,
-              dir_o.calle as recogida, 
-              dir_d.calle as entrega
-            FROM pedidos p
-            JOIN usuarios u_c ON p.cliente_id = u_c.id
-            LEFT JOIN tipos_servicios ts ON p.tipo_servicio_id = ts.id
-            JOIN direcciones dir_o ON p.direccion_origen_id = dir_o.id
-            JOIN direcciones dir_d ON p.direccion_destino_id = dir_d.id
-            WHERE p.repartidor_id = $1 
-              AND p.estado IN ('asignado', 'en_camino')
-            ORDER BY p.fecha_pedido DESC
-            LIMIT 1;
-        `;
-    const orderResult = await pool.query(orderQuery, [userId]);
-    const hasOrder = orderResult.rows.length > 0;
+    const { is_active, is_available } = driverQuery.rows[0];
 
-    if (hasOrder && !driverRes.rows[0].tiene_pedido) {
-        await pool.query("UPDATE repartidores SET tiene_pedido = true, is_available = false WHERE usuario_id = $1", [userId]);
+    // 2. Si existe pero está suspendido
+    if (is_active !== 'activo') {
+      return res.status(200).json({ 
+        driverStatus: is_active, 
+        active: false 
+      });
     }
 
-    res.json({
-      active: hasOrder,
-      order: orderResult.rows[0] || null,
-      isAvailableInDB: driverRes.rows[0].is_available,
-      tiene_pedido: hasOrder ? true : driverRes.rows[0].tiene_pedido, 
-      status: driverRes.rows[0].is_active,
+    // 3. Si está activo, buscamos si tiene un pedido pendiente
+    // Usamos JOIN para traer los nombres de cliente y servicio de una vez
+    const orderQuery = await pool.query(`
+      SELECT 
+        p.id as pedido_id, 
+        p.total as monto_bs, 
+        p.total_dolar as monto_usd, 
+        p.estado, 
+        u.nombre as cliente_nombre, 
+        u.telefono as cliente_telefono,
+        ts.descript as tipo_servicio,
+        d_orig.calle as recogida, 
+        d_dest.calle as entrega
+      FROM pedidos p
+      JOIN usuarios u ON p.cliente_id = u.id
+      JOIN tipos_servicios ts ON p.tipo_servicio_id = ts.id
+      JOIN direcciones d_orig ON p.direccion_origen_id = d_orig.id
+      JOIN direcciones d_dest ON p.direccion_destino_id = d_dest.id
+      WHERE p.repartidor_id = $1 AND p.estado IN ('asignado', 'en_camino')
+      LIMIT 1
+    `, [usuarioId]);
+
+    // 4. Respuesta completa para el Frontend
+    return res.status(200).json({
+      driverStatus: 'activo',
+      active: orderQuery.rowCount > 0,
+      isAvailableInDB: is_available,
+      order: orderQuery.rows[0] || null
     });
+
   } catch (error) {
-    console.error("Error en getCurrentOrder:", error);
-    res.status(500).json({ error: error.message });
+    console.error("❌ Error en getCurrentOrder:", error);
+    res.status(500).json({ error: "Error interno del servidor" });
   }
 };
-
 // 3. Actualizar Estado del Pedido (Lógica centralizada)
 
 export const updateOrderStatus = async (req, res) => {
