@@ -33,52 +33,106 @@ export const toggleAvailability = async (req, res) => {
 };
 
 // 2. Obtener estado actual (Sincronización para F5)
+// export const getCurrentOrder = async (req, res) => {
+//     const userId = req.userId;
+//     try {
+//       const driverRes = await pool.query(
+//         `SELECT is_available, is_active, tiene_pedido FROM repartidores WHERE usuario_id = $1`,
+//         [userId]
+//       );
+  
+//       if (driverRes.rows.length === 0) {
+//         return res.status(404).json({ success: false, message: "Repartidor no encontrado" });
+//       }
+  
+//       // Buscamos pedido: prioridad absoluta a lo que diga la tabla pedidos
+//       const orderQuery = `
+//               SELECT p.id as pedido_id, p.total_dolar as monto, p.estado,
+//                      u_c.nombre as cliente_nombre,
+//                      dir_o.calle as recogida, dir_d.calle as entrega
+//               FROM pedidos p
+//               JOIN usuarios u_c ON p.cliente_id = u_c.id
+//               JOIN direcciones dir_o ON p.direccion_origen_id = dir_o.id
+//               JOIN direcciones dir_d ON p.direccion_destino_id = dir_d.id
+//               WHERE p.repartidor_id = $1 
+//                 AND p.estado IN ('asignado', 'en_camino')
+//               ORDER BY p.fecha_pedido DESC
+//               LIMIT 1;
+//           `;
+//       const orderResult = await pool.query(orderQuery, [userId]);
+//       const hasOrder = orderResult.rows.length > 0;
+  
+//       // Sincronización forzada: Si tiene pedido en la tabla, tiene_pedido debe ser true en repartidores
+//       if (hasOrder && !driverRes.rows[0].tiene_pedido) {
+//           await pool.query("UPDATE repartidores SET tiene_pedido = true, is_available = false WHERE usuario_id = $1", [userId]);
+//       }
+  
+//       res.json({
+//         active: hasOrder,
+//         order: orderResult.rows[0] || null,
+//         isAvailableInDB: driverRes.rows[0].is_available,
+//         tiene_pedido: hasOrder ? true : driverRes.rows[0].tiene_pedido, 
+//         status: driverRes.rows[0].is_active,
+//       });
+//     } catch (error) {
+//       console.error("Error en getCurrentOrder:", error);
+//       res.status(500).json({ error: error.message });
+//     }
+//   };
+
 export const getCurrentOrder = async (req, res) => {
-    const userId = req.userId;
-    try {
-      const driverRes = await pool.query(
-        `SELECT is_available, is_active, tiene_pedido FROM repartidores WHERE usuario_id = $1`,
-        [userId]
-      );
-  
-      if (driverRes.rows.length === 0) {
-        return res.status(404).json({ success: false, message: "Repartidor no encontrado" });
-      }
-  
-      // Buscamos pedido: prioridad absoluta a lo que diga la tabla pedidos
-      const orderQuery = `
-              SELECT p.id as pedido_id, p.total_dolar as monto, p.estado,
-                     u_c.nombre as cliente_nombre,
-                     dir_o.calle as recogida, dir_d.calle as entrega
-              FROM pedidos p
-              JOIN usuarios u_c ON p.cliente_id = u_c.id
-              JOIN direcciones dir_o ON p.direccion_origen_id = dir_o.id
-              JOIN direcciones dir_d ON p.direccion_destino_id = dir_d.id
-              WHERE p.repartidor_id = $1 
-                AND p.estado IN ('asignado', 'en_camino')
-              ORDER BY p.fecha_pedido DESC
-              LIMIT 1;
-          `;
-      const orderResult = await pool.query(orderQuery, [userId]);
-      const hasOrder = orderResult.rows.length > 0;
-  
-      // Sincronización forzada: Si tiene pedido en la tabla, tiene_pedido debe ser true en repartidores
-      if (hasOrder && !driverRes.rows[0].tiene_pedido) {
-          await pool.query("UPDATE repartidores SET tiene_pedido = true, is_available = false WHERE usuario_id = $1", [userId]);
-      }
-  
-      res.json({
-        active: hasOrder,
-        order: orderResult.rows[0] || null,
-        isAvailableInDB: driverRes.rows[0].is_available,
-        tiene_pedido: hasOrder ? true : driverRes.rows[0].tiene_pedido, 
-        status: driverRes.rows[0].is_active,
-      });
-    } catch (error) {
-      console.error("Error en getCurrentOrder:", error);
-      res.status(500).json({ error: error.message });
+  const userId = req.userId;
+  try {
+    const driverRes = await pool.query(
+      `SELECT is_available, is_active, tiene_pedido FROM repartidores WHERE usuario_id = $1`,
+      [userId]
+    );
+
+    if (driverRes.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Repartidor no encontrado" });
     }
-  };
+
+    // Query mejorada con JOINs para teléfono y descripción de servicio
+    const orderQuery = `
+            SELECT 
+              p.id as pedido_id, 
+              p.total_dolar as monto_usd, 
+              p.total as monto_bs, 
+              p.estado,
+              u_c.nombre as cliente_nombre,
+              u_c.telefono as cliente_telefono,
+              ts.descript as tipo_servicio,
+              dir_o.calle as recogida, 
+              dir_d.calle as entrega
+            FROM pedidos p
+            JOIN usuarios u_c ON p.cliente_id = u_c.id
+            LEFT JOIN tipos_servicios ts ON p.tipo_servicio_id = ts.id
+            JOIN direcciones dir_o ON p.direccion_origen_id = dir_o.id
+            JOIN direcciones dir_d ON p.direccion_destino_id = dir_d.id
+            WHERE p.repartidor_id = $1 
+              AND p.estado IN ('asignado', 'en_camino')
+            ORDER BY p.fecha_pedido DESC
+            LIMIT 1;
+        `;
+    const orderResult = await pool.query(orderQuery, [userId]);
+    const hasOrder = orderResult.rows.length > 0;
+
+    if (hasOrder && !driverRes.rows[0].tiene_pedido) {
+        await pool.query("UPDATE repartidores SET tiene_pedido = true, is_available = false WHERE usuario_id = $1", [userId]);
+    }
+
+    res.json({
+      active: hasOrder,
+      order: orderResult.rows[0] || null,
+      isAvailableInDB: driverRes.rows[0].is_available,
+      tiene_pedido: hasOrder ? true : driverRes.rows[0].tiene_pedido, 
+      status: driverRes.rows[0].is_active,
+    });
+  } catch (error) {
+    console.error("Error en getCurrentOrder:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
 
 // 3. Actualizar Estado del Pedido (Lógica centralizada)
 
