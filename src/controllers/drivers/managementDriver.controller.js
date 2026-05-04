@@ -75,7 +75,7 @@ export const getCurrentOrder = async (req, res) => {
   }
 };
 
-// 3. Lógica centralizada de estados
+// 3. Lógica centralizada de estados (CON SOCKET PARA CLIENTE)
 export const updateOrderStatus = async (req, res) => {
     const { pedido_id, status } = req.body;
     const driverId = req.userId;
@@ -84,13 +84,18 @@ export const updateOrderStatus = async (req, res) => {
 
     try {
         await client.query("BEGIN");
+        
+        // 1. Actualizar estado del pedido
         const orderRes = await client.query(
-            `UPDATE pedidos SET estado = $1 WHERE id = $2 AND repartidor_id = $3 RETURNING id`,
+            `UPDATE pedidos SET estado = $1 WHERE id = $2 AND repartidor_id = $3 RETURNING id, cliente_id`,
             [status, pedido_id, driverId]
         );
 
-        if (orderRes.rows.length === 0) throw new Error("Pedido no encontrado");
+        if (orderRes.rows.length === 0) throw new Error("Pedido no encontrado o no asignado");
+        
+        const cliente_id = orderRes.rows[0].cliente_id;
 
+        // 2. Lógica de repartidores
         if (status === 'en_camino') {
             await client.query(
                 `UPDATE repartidores SET tiene_pedido = true, is_available = false WHERE usuario_id = $1`, 
@@ -105,20 +110,33 @@ export const updateOrderStatus = async (req, res) => {
         }
 
         await client.query("COMMIT");
-        if (io) assignPendingOrders(io);
 
-        res.json({ success: true, message: `Estado: ${status}` });
+        // 3. NOTIFICACIONES SOCKETS
+        if (io) {
+            // NOTIFICAR AL CLIENTE (Esto es lo que faltaba)
+            io.to(cliente_id.toString()).emit('ORDEN_ACTUALIZADA', {
+                pedido_id,
+                nuevo_estado: status
+            });
+
+            // Si entregó, procesar la cola para otros pedidos
+            if (status === 'entregado') {
+                assignPendingOrders(io);
+            }
+        }
+
+        res.json({ success: true, message: `Estado actualizado a ${status}` });
     } catch (error) {
         if (client) await client.query("ROLLBACK");
+        console.error("Error en updateOrderStatus:", error);
         res.status(500).json({ success: false, error: error.message });
     } finally {
         client.release();
     }
 };
 
-// 4. Función específica para finalizar (La que faltaba)
+// 4. Función específica para finalizar
 export const completeOrder = async (req, res) => {
-    // Reutilizamos la lógica de updateOrderStatus forzando el estado 'entregado'
     req.body.status = 'entregado';
     return updateOrderStatus(req, res);
 };
