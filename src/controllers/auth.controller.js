@@ -2,85 +2,95 @@ import { pool } from '../db.js';
 import { assignPendingOrders } from '../services/assignmentServices.js';
 
 export const logoutUser = async (req, res) => {
-    const userId = req.userId;
+    const userId = req.userId; // Este es el 'id' de la tabla 'usuarios'
     const io = req.app.get('socketio');
     const client = await pool.connect();
 
     try {
+        if (!userId) {
+            return res.status(401).json({ error: "No se encontró sesión activa." });
+        }
+
         await client.query('BEGIN');
 
-        if (userId) {
-            // 1. Buscamos el pedido activo y verificamos su estado exacto
-            const activeOrderCheck = await client.query(
-                `SELECT id, estado FROM pedidos 
-                 WHERE repartidor_id = $1 AND estado IN ('asignado', 'en_camino')`,
-                [userId]
-            );
+        // 1. Verificamos el estado del pedido directamente con el repartidor_id (usuarios.id)
+        const orderQuery = await client.query(
+            `SELECT id, estado FROM pedidos 
+             WHERE repartidor_id = $1 
+             AND estado IN ('asignado', 'en_camino')
+             LIMIT 1`,
+            [userId]
+        );
 
-            if (activeOrderCheck.rowCount > 0) {
-                const pedido = activeOrderCheck.rows[0];
+        if (orderQuery.rowCount > 0) {
+            const pedido = orderQuery.rows[0];
 
-                // 2. LÓGICA CONDICIONAL:
-                if (pedido.estado === 'asignado') {
-                    // CASO A: Todavía no ha recogido. Liberamos el pedido.
-                    await client.query(
-                        `UPDATE pedidos 
-                         SET estado = 'pendiente', repartidor_id = NULL 
-                         WHERE id = $1`,
-                        [pedido.id]
-                    );
+            // CASO: El pedido está 'asignado' (todavía no ha sido recogido)
+            if (pedido.estado === 'asignado') {
+                // Liberamos el pedido para que pase a 'pendiente' y no tenga repartidor
+                await client.query(
+                    `UPDATE pedidos 
+                     SET estado = 'pendiente', repartidor_id = NULL 
+                     WHERE id = $1`,
+                    [pedido.id]
+                );
 
-                    await client.query(
-                        `UPDATE repartidores SET tiene_pedido = false WHERE usuario_id = $1`,
-                        [userId]
-                    );
-                    
-                    console.log(`📦 Pedido #${pedido.id} REASIGNADO (Logout en estado 'asignado')`);
-                } 
-                else if (pedido.estado === 'en_camino') {
-                    // CASO B: Ya recogió el paquete. NO desvinculamos.
-                    // Solo nos aseguramos de que no reciba nada nuevo.
-                    console.log(`🛵 Pedido #${pedido.id} PERMANECE con conductor ${userId} (Logout en estado 'en_camino')`);
-                }
+                // IMPORTANTE: Seteamos 'tiene_pedido' a FALSE en la tabla repartidores
+                await client.query(
+                    `UPDATE repartidores SET tiene_pedido = false WHERE usuario_id = $1`,
+                    [userId]
+                );
+                
+                console.log(`✅ Pedido #${pedido.id} devuelto a pendiente. Repartidor #${userId} liberado.`);
+            } 
+            // CASO: El pedido está 'en_camino'
+            else if (pedido.estado === 'en_camino') {
+                // No tocamos nada. 'tiene_pedido' debe seguir siendo TRUE en repartidores.
+                console.log(`🛵 Repartidor #${userId} cerró sesión con pedido #${pedido.id} en camino. Se mantiene asignado.`);
             }
-
-            // 3. DESCONECTAR DISPONIBILIDAD (Siempre ocurre)
+        } else {
+            // CASO: No tiene pedidos activos. 
+            // Forzamos que 'tiene_pedido' sea false por seguridad.
             await client.query(
-                `UPDATE repartidores 
-                 SET is_available = false, available_since = NULL 
-                 WHERE usuario_id = $1`,
+                `UPDATE repartidores SET tiene_pedido = false WHERE usuario_id = $1`,
                 [userId]
             );
         }
 
+        // 2. Desconexión de disponibilidad (Independiente del estado del pedido)
+        // Esto asegura que deje de recibir pedidos nuevos y salga de la cola FIFO
+        await client.query(
+            `UPDATE repartidores 
+             SET is_available = false, 
+                 available_since = NULL 
+             WHERE usuario_id = $1`,
+            [userId]
+        );
+
         await client.query('COMMIT');
 
-        // 4. Disparar reasignación solo si liberamos algún pedido 'asignado'
+        // 3. Si liberamos un pedido (pasó a pendiente), intentamos asignarlo a otro disponible
         if (io) {
             assignPendingOrders(io);
         }
 
-        // 5. Limpiar Cookie
+        // 4. Limpieza de cookie de acceso
         res.clearCookie('accessToken', {
             httpOnly: true,
             secure: true,
             sameSite: 'none',
         });
 
-        return res.status(200).json({ 
-            success: true, 
-            message: "Sesión cerrada correctamente." 
-        });
+        return res.status(200).json({ success: true, message: "Sesión cerrada y disponibilidad desactivada." });
 
     } catch (error) {
         if (client) await client.query('ROLLBACK');
-        console.error("🔥 Error en logout:", error);
-        return res.status(500).json({ error: "Error al cerrar sesión." });
+        console.error("🔥 Error crítico en logoutUser:", error.message);
+        return res.status(500).json({ error: "Error interno al cerrar sesión." });
     } finally {
         client.release();
     }
 };
-
 
 // import { pool } from '../db.js';
 // import { assignPendingOrders } from '../services/assignmentServices.js'; // Importación directa preferible
