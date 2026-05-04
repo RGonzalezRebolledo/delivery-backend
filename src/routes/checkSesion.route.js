@@ -1,5 +1,5 @@
 import { Router } from "express"
-import { checkSesion } from "./middlewares/checkSesion.js"
+import { checkSesion } from "./middlewares/checkSesionviejo.js"
 import { verifyToken } from './middlewares/verifyToken.js';
 
 const routerCheckSesion = Router();
