@@ -1,60 +1,87 @@
 import { pool } from "../../db.js";
 
+/**
+ * Busca si el cliente tiene algún pedido entregado que aún no ha sido calificado.
+ * Según tu script, usamos 'cliente_id' y el estado 'entregado'.
+ */
+export const getPendingRating = async (req, res) => {
+    const clienteId = req.userId; 
+
+    try {
+        // Buscamos pedidos en estado 'entregado'. 
+        // Nota: Si no tienes la columna 'calificado' en la tabla 'pedidos', 
+        // hacemos un LEFT JOIN con la tabla de calificaciones para ver cuáles faltan.
+        const query = `
+            SELECT p.id, p.total, p.total_dolar, p.fecha_pedido
+            FROM pedidos p
+            LEFT JOIN calificaciones_pedidos c ON p.id = c.pedido_id
+            WHERE p.cliente_id = $1 
+              AND p.estado = 'entregado'
+              AND c.id IS NULL
+            ORDER BY p.fecha_pedido ASC
+            LIMIT 1;
+        `;
+        
+        const result = await pool.query(query, [clienteId]);
+
+        if (result.rows.length > 0) {
+            res.json({ 
+                tienePendientes: true, 
+                pedido: result.rows[0] 
+            });
+        } else {
+            res.json({ tienePendientes: false });
+        }
+    } catch (error) {
+        console.error("❌ Error en getPendingRating:", error);
+        res.status(500).json({ error: "Error al verificar pedidos pendientes de calificación" });
+    }
+};
+
+/**
+ * Guarda la calificación en la base de datos.
+ * Basado en tu script: emisor_id (cliente) y receptor_id (repartidor).
+ */
 export const submitRating = async (req, res) => {
     const { pedidoId, estrellas, comentario } = req.body;
-    const emisorId = req.userId; // El ID del usuario logueado (Cliente)
+    const emisorId = req.userId; 
     const client = await pool.connect();
-
-    if (!estrellas || estrellas < 1 || estrellas > 5) {
-        return res.status(400).json({ error: "La calificación debe estar entre 1 y 5 estrellas" });
-    }
 
     try {
         await client.query("BEGIN");
 
-        // 1. Verificamos que el pedido exista y obtenemos al repartidor (receptor)
+        // Obtenemos el ID del repartidor asignado a ese pedido
         const pedidoRes = await client.query(
             "SELECT repartidor_id FROM pedidos WHERE id = $1 AND cliente_id = $2",
             [pedidoId, emisorId]
         );
 
         if (pedidoRes.rowCount === 0) {
-            throw new Error("El pedido no existe o no tienes permiso para calificarlo.");
+            throw new Error("Pedido no encontrado.");
         }
 
         const receptorId = pedidoRes.rows[0].repartidor_id;
 
-        // 2. INSERT en 'calificaciones_pedidos' usando los nombres reales de tu script
-        // emisor_id = Cliente, receptor_id = Repartidor
+        // Insertamos usando tus columnas: emisor_id, receptor_id, estrellas, comentario
         const insertQuery = `
-            INSERT INTO calificaciones_pedidos (
-                pedido_id, 
-                emisor_id, 
-                receptor_id, 
-                estrellas, 
-                comentario
-            )
+            INSERT INTO calificaciones_pedidos (pedido_id, emisor_id, receptor_id, estrellas, comentario)
             VALUES ($1, $2, $3, $4, $5);
         `;
         await client.query(insertQuery, [pedidoId, emisorId, receptorId, estrellas, comentario]);
 
-        // 3. Marcamos el pedido como calificado en la tabla 'pedidos'
-        // (Asegúrate de tener esta columna 'calificado' en tu tabla pedidos o ignora este paso)
+        // Opcional: Cambiamos el estado a 'finalizado' para que ya no cuente como entregado/pendiente
         await client.query(
-            "UPDATE pedidos SET estado = 'finalizado' WHERE id = $1", 
+            "UPDATE pedidos SET estado = 'finalizado' WHERE id = $1",
             [pedidoId]
         );
 
         await client.query("COMMIT");
-        res.json({ success: true, message: "Calificación guardada exitosamente" });
+        res.json({ success: true, message: "¡Gracias por tu calificación!" });
 
     } catch (error) {
         if (client) await client.query("ROLLBACK");
         console.error("❌ Error en submitRating:", error);
-        res.status(500).json({ 
-            success: false, 
-            error: error.message || "Error al procesar la calificación" 
-        });
+        res.status(500).json({ success: false, error: error.message });
     } finally {
         client.release();
     }
