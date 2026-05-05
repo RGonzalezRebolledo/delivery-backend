@@ -1,9 +1,9 @@
-import { pool } from "../db.js";
+import { pool } from "../../db.js";
 
 export const getAdminDashboardStats = async (req, res) => {
-    try {
-        // 1. Relación de pagos pendientes a conductores (Total acumulado)
-        const pagosPendientesQuery = `
+  try {
+    // 1. Relación de pagos pendientes a conductores (Total acumulado)
+    const pagosPendientesQuery = `
             SELECT 
                 COUNT(*) FILTER (WHERE estado_pago_repartidor = 'pendiente') as pedidos_por_liquidar,
                 SUM(monto_repartidor) FILTER (WHERE estado_pago_repartidor = 'pendiente') as total_bs_pendiente,
@@ -11,8 +11,8 @@ export const getAdminDashboardStats = async (req, res) => {
             FROM liquidaciones_repartidores;
         `;
 
-        // 2. Ganancias de Gazzella (Mes actual)
-        const gananciasAppQuery = `
+    // 2. Ganancias de Gazzella (Mes actual)
+    const gananciasAppQuery = `
             SELECT 
                 SUM(monto_comision_app) as total_bs_ganado,
                 SUM(monto_comision_usd) as total_usd_ganado
@@ -20,8 +20,8 @@ export const getAdminDashboardStats = async (req, res) => {
             WHERE DATE_TRUNC('month', fecha_proceso) = DATE_TRUNC('month', CURRENT_DATE);
         `;
 
-        // 3. Cantidad de pedidos en el mes (Por estado)
-        const pedidosMesQuery = `
+    // 3. Cantidad de pedidos en el mes (Por estado)
+    const pedidosMesQuery = `
             SELECT 
                 COUNT(*) as total_pedidos,
                 COUNT(*) FILTER (WHERE estado = 'entregado') as completados,
@@ -30,8 +30,8 @@ export const getAdminDashboardStats = async (req, res) => {
             WHERE DATE_TRUNC('month', fecha_pedido) = DATE_TRUNC('month', CURRENT_DATE);
         `;
 
-        // 4. Resumen por Repartidor (Top 5 con más entregas)
-        const rankingRepartidoresQuery = `
+    // 4. Resumen por Repartidor (Top 5 con más entregas)
+    const rankingRepartidoresQuery = `
             SELECT 
                 u.nombre,
                 COUNT(l.id) as entregas,
@@ -43,8 +43,8 @@ export const getAdminDashboardStats = async (req, res) => {
             LIMIT 5;
         `;
 
-        // 5. Histórico de ventas de los últimos 15 días (Para el gráfico de líneas)
-        const historicoVentasQuery = `
+    // 5. Histórico de ventas de los últimos 15 días (Para el gráfico de líneas)
+    const historicoVentasQuery = `
             SELECT 
                 TO_CHAR(fecha_pedido, 'DD/MM') as fecha,
                 COUNT(*) as total_pedidos,
@@ -55,25 +55,24 @@ export const getAdminDashboardStats = async (req, res) => {
             ORDER BY DATE_TRUNC('day', fecha_pedido) ASC;
         `;
 
-        // Ejecución de todas las consultas en paralelo
-        const [pagos, ganancias, pedidos, ranking, historico] = await Promise.all([
-            pool.query(pagosPendientesQuery),
-            pool.query(gananciasAppQuery),
-            pool.query(pedidosMesQuery),
-            pool.query(rankingRepartidoresQuery),
-            pool.query(historicoVentasQuery)
-        ]);
+    // Ejecución de todas las consultas en paralelo
+    const [pagos, ganancias, pedidos, ranking, historico] = await Promise.all([
+      pool.query(pagosPendientesQuery),
+      pool.query(gananciasAppQuery),
+      pool.query(pedidosMesQuery),
+      pool.query(rankingRepartidoresQuery),
+      pool.query(historicoVentasQuery),
+    ]);
 
-        res.json({
-            pagosPendientes: pagos.rows[0],
-            gananciasGazzella: ganancias.rows[0],
-            pedidosMes: pedidos.rows[0],
-            topRepartidores: ranking.rows,
-            historicoVentas: historico.rows
-        });
-
-    } catch (error) {
-        console.error("❌ Error en Dashboard:", error);
-        res.status(500).json({ error: "Error al cargar estadísticas del sistema" });
-    }
+    res.json({
+      pagosPendientes: pagos.rows[0],
+      gananciasGazzella: ganancias.rows[0],
+      pedidosMes: pedidos.rows[0],
+      topRepartidores: ranking.rows,
+      historicoVentas: historico.rows,
+    });
+  } catch (error) {
+    console.error("❌ Error en Dashboard:", error);
+    res.status(500).json({ error: "Error al cargar estadísticas del sistema" });
+  }
 };
