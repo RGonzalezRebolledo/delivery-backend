@@ -4,6 +4,7 @@ import {
   getCurrentOrder,
   completeOrder,
   updateOrderStatus,
+  getDriverRatingAverage
 } from "../../controllers/drivers/managementDriver.controller.js";
 import { verifyToken } from "../middlewares/verifyToken.js"; // 👈 Importar el middleware
 
@@ -21,5 +22,6 @@ routerDriverManagement.get("/driver/current-order", getCurrentOrder);
 // Ruta para finalizar la entrega
 routerDriverManagement.post("/driver/complete-order", completeOrder);
 routerDriverManagement.patch("/driver/order-status", updateOrderStatus);
+routerDriverManagement.get('/driver/rating/:driverId', getDriverRatingAverage);
 
 export default routerDriverManagement;

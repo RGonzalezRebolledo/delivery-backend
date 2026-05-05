@@ -160,6 +160,32 @@ export const completeOrder = async (req, res) => {
     return updateOrderStatus(req, res);
 };
 
+// fUNCION PARA OBTENER EL PROMEDIO DE AVERAGE DEL CONDUCTOR
+export const getDriverRatingAverage = async (req, res) => {
+  const { driverId } = req.params; // El receptor_id (ID de usuario del repartidor)
+
+  try {
+      const query = `
+          SELECT 
+              ROUND(AVG(estrellas), 1) as promedio,
+              COUNT(id) as total_calificaciones
+          FROM calificaciones_pedidos
+          WHERE receptor_id = $1;
+      `;
+      const result = await pool.query(query, [driverId]);
+
+      const stats = result.rows[0];
+      
+      res.json({
+          promedio: stats.promedio || 0,
+          total: stats.total_calificaciones || 0
+      });
+  } catch (error) {
+      console.error("❌ Error al obtener promedio:", error);
+      res.status(500).json({ error: "Error al obtener reputación del conductor" });
+  }
+};
+
 // import { pool } from "../../db.js";
 // import { assignPendingOrders } from "../../services/assignmentServices.js";
 
