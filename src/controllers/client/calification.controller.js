@@ -1,13 +1,6 @@
-
-// src/controllers/client/calification.controller.js
 import { pool } from "../../db.js";
 
-/**
- * 1. OBTENER PEDIDO PENDIENTE POR CALIFICAR
- * Busca si el cliente tiene un pedido 'entregado' que aún no ha sido calificado.
- */
 export const getPendingRating = async (req, res) => {
-    // Usamos req.userId (asegúrate de que tu middleware de auth use este nombre)
     const usuarioId = req.userId; 
 
     try {
@@ -23,27 +16,21 @@ export const getPendingRating = async (req, res) => {
         const result = await pool.query(query, [usuarioId]);
 
         if (result.rows.length > 0) {
-            // Enviamos tienePendientes: true para que el frontend dispare el RatingModal
             res.json({ tienePendientes: true, pedido: result.rows[0] });
         } else {
             res.json({ tienePendientes: false });
         }
     } catch (error) {
         console.error("❌ Error en getPendingRating:", error);
-        res.status(500).json({ error: "Error interno al verificar calificaciones pendientes" });
+        res.status(500).json({ error: "Error interno al verificar calificaciones" });
     }
 };
 
-/**
- * 2. REGISTRAR CALIFICACIÓN
- * Guarda la puntuación en 'calificaciones_pedidos' y marca el pedido como calificado.
- */
 export const submitRating = async (req, res) => {
     const { pedidoId, estrellas, comentario } = req.body;
-    const emisorId = req.userId; // El cliente logueado
+    const emisorId = req.userId; 
     const client = await pool.connect();
 
-    // Validación de estrellas
     if (!estrellas || estrellas < 1 || estrellas > 5) {
         return res.status(400).json({ error: "La calificación debe estar entre 1 y 5 estrellas" });
     }
@@ -51,7 +38,6 @@ export const submitRating = async (req, res) => {
     try {
         await client.query("BEGIN");
 
-        // A. Buscamos el repartidor_id (receptor) y validamos propiedad del pedido
         const pedidoRes = await client.query(
             "SELECT repartidor_id FROM pedidos WHERE id = $1 AND cliente_id = $2",
             [pedidoId, emisorId]
@@ -63,30 +49,27 @@ export const submitRating = async (req, res) => {
 
         const receptorId = pedidoRes.rows[0].repartidor_id;
 
-        // B. Insertar en 'calificaciones_pedidos'
-        // Ajustado a los nombres de columna: pedido_id, usuario_id (cliente), conductor_id, estrellas, comentario
+        // --- CAMBIO AQUÍ: usuario_id -> cliente_id ---
         const insertQuery = `
-            INSERT INTO calificaciones_pedidos (pedido_id, usuario_id, conductor_id, estrellas, comentario)
+            INSERT INTO calificaciones_pedidos (pedido_id, cliente_id, conductor_id, estrellas, comentario)
             VALUES ($1, $2, $3, $4, $5);
         `;
         await client.query(insertQuery, [pedidoId, emisorId, receptorId, estrellas, comentario]);
 
-        // C. Marcar el pedido como calificado (ACTUALIZA LA TABLA PEDIDOS)
-        // Esto es lo que hace que getPendingRating ya no devuelva este pedido
         await client.query(
             "UPDATE pedidos SET calificado = true WHERE id = $1",
             [pedidoId]
         );
 
         await client.query("COMMIT");
-        res.json({ success: true, message: "¡Gracias por calificar el servicio de Gazzella Express!" });
+        res.json({ success: true, message: "Calificación guardada exitosamente" });
 
     } catch (error) {
         if (client) await client.query("ROLLBACK");
         console.error("❌ Error en submitRating:", error);
         res.status(500).json({ 
             success: false, 
-            error: error.message || "Error al procesar la calificación" 
+            error: "Error al procesar la calificación. Verifica los nombres de las columnas." 
         });
     } finally {
         client.release();
