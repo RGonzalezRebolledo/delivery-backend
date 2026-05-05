@@ -4,7 +4,15 @@
 -- ------------------------------------------------------------------
 
 -- 1. LIMPIEZA DE ENTORNO
+-- ------------------------------------------------------------------
+-- SCRIPT COMPLETO: GAZELLA EXPRESS (VENEZUELA)
+-- ------------------------------------------------------------------
+
+-- 1. LIMPIEZA TOTAL (Orden jerárquico para evitar errores de FK)
 DROP VIEW IF EXISTS vista_pedidos_resumen;
+DROP TABLE IF EXISTS liquidaciones_repartidores CASCADE;
+DROP TABLE IF EXISTS calificaciones CASCADE;
+DROP TABLE IF EXISTS configuracion_app CASCADE;
 DROP TABLE IF EXISTS payments CASCADE;
 DROP TABLE IF EXISTS repartidores_pedidos CASCADE;
 DROP TABLE IF EXISTS pedido_detalles CASCADE;
@@ -17,11 +25,11 @@ DROP TABLE IF EXISTS tipos_servicios CASCADE;
 DROP TABLE IF EXISTS exchange_rates CASCADE;
 DROP TABLE IF EXISTS usuarios CASCADE; 
 
--- Habilitar extensión para contraseñas seguras
+-- Habilitar extensión para seguridad
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- ------------------------------------------------------------------
--- 2. TABLAS MAESTRAS (Configuración y Tipos)
+-- 2. TABLAS MAESTRAS
 -- ------------------------------------------------------------------
 
 CREATE TABLE exchange_rates (
@@ -46,7 +54,7 @@ CREATE TABLE tipos_servicios (
 );
 
 -- ------------------------------------------------------------------
--- 3. GESTIÓN DE USUARIOS Y PERFILES
+-- 3. GESTIÓN DE USUARIOS Y REPARTIDORES
 -- ------------------------------------------------------------------
 
 CREATE TABLE usuarios (
@@ -59,7 +67,6 @@ CREATE TABLE usuarios (
     password_hash VARCHAR(255) NOT NULL
 );
 
--- REPARTIDORES: Incorporación de lógica de disponibilidad y cola FIFO
 CREATE TABLE repartidores (
     id SERIAL PRIMARY KEY,
     usuario_id INT REFERENCES usuarios(id) ON DELETE CASCADE UNIQUE, 
@@ -70,15 +77,13 @@ CREATE TABLE repartidores (
     foto_vehiculo VARCHAR(255), 
     is_active VARCHAR(20) DEFAULT 'activo' CHECK (is_active IN ('activo','suspendido')),
     tiene_pedido BOOLEAN DEFAULT false,
-    
-    -- Gestión de entregas (Cola Estática)
     is_available BOOLEAN DEFAULT FALSE,
     available_since TIMESTAMP WITHOUT TIME ZONE,
     ultima_entrega_at TIMESTAMP WITHOUT TIME ZONE 
 );
 
 -- ------------------------------------------------------------------
--- 4. LOGÍSTICA (Direcciones y Productos)
+-- 4. LOGÍSTICA
 -- ------------------------------------------------------------------
 
 CREATE TABLE productos (
@@ -121,7 +126,6 @@ CREATE TABLE pedidos (
     municipio_destino VARCHAR(100),
     pago_confirmado BOOLEAN DEFAULT FALSE,
     fecha_entrega TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    -- CORRECCIÓN: Apunta a usuarios(id) para que coincida con el socket.id del Frontend
     repartidor_id INT REFERENCES usuarios(id) 
 );
 
@@ -141,7 +145,40 @@ CREATE TABLE payments (
 );
 
 -- ------------------------------------------------------------------
--- 6. DETALLES Y ASIGNACIONES
+-- 6. CALIFICACIONES Y LIQUIDACIONES
+-- ------------------------------------------------------------------
+
+CREATE TABLE calificaciones (
+    id SERIAL PRIMARY KEY,
+    pedido_id INT REFERENCES pedidos(id) ON DELETE CASCADE,
+    emisor_id INT REFERENCES usuarios(id),
+    receptor_id INT REFERENCES usuarios(id),
+    puntuacion INT NOT NULL CHECK (puntuacion BETWEEN 1 AND 5),
+    comentario TEXT,
+    fecha_calificacion TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(pedido_id, emisor_id)
+);
+
+CREATE TABLE liquidaciones_repartidores (
+    id SERIAL PRIMARY KEY,
+    pedido_id INT REFERENCES pedidos(id) ON DELETE CASCADE,
+    repartidor_id INT REFERENCES usuarios(id),
+    monto_total_pedido DECIMAL(12, 2) NOT NULL,
+    porcentaje_app DECIMAL(5, 2) NOT NULL,
+    monto_comision_app DECIMAL(12, 2) NOT NULL,
+    monto_repartidor DECIMAL(12, 2) NOT NULL,
+    estado_pago_repartidor VARCHAR(20) DEFAULT 'pendiente' CHECK (estado_pago_repartidor IN ('pendiente', 'pagado')),
+    fecha_proceso TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE configuracion_app (
+    clave VARCHAR(50) PRIMARY KEY, -- Eliminado 'id SERIAL' para evitar conflicto de PK
+    valor DECIMAL(10, 2) NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ------------------------------------------------------------------
+-- 7. DETALLES Y VISTAS
 -- ------------------------------------------------------------------
 
 CREATE TABLE pedido_detalles (
@@ -154,15 +191,11 @@ CREATE TABLE pedido_detalles (
 
 CREATE TABLE repartidores_pedidos (
     id SERIAL PRIMARY KEY,
-    repartidor_id INT REFERENCES usuarios(id) ON DELETE CASCADE, -- Usar usuario_id
+    repartidor_id INT REFERENCES usuarios(id) ON DELETE CASCADE,
     pedido_id INT REFERENCES pedidos(id) ON DELETE CASCADE,
     fecha_asignacion TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     fecha_entrega TIMESTAMPTZ 
 );
-
--- ------------------------------------------------------------------
--- 7. VISTA DE MONITOREO (Resumen Operativo)
--- ------------------------------------------------------------------
 
 CREATE VIEW vista_pedidos_resumen AS
 SELECT 
@@ -182,36 +215,30 @@ JOIN usuarios u ON p.cliente_id = u.id
 JOIN direcciones d ON p.direccion_destino_id = d.id
 LEFT JOIN tipos_servicios ts ON p.tipo_servicio_id = ts.id
 LEFT JOIN payments pay ON p.id = pay.pedido_id
-LEFT JOIN usuarios u_rep ON p.repartidor_id = u_rep.id -- Cambio aquí para usar la nueva referencia
+LEFT JOIN usuarios u_rep ON p.repartidor_id = u_rep.id 
 LEFT JOIN repartidores r ON u_rep.id = r.usuario_id
 LEFT JOIN tipos_vehiculos tv ON r.tipo_vehiculo_id = tv.id;
 
 -- ------------------------------------------------------------------
--- 8. DATOS INICIALES Y ADMINISTRADOR
+-- 8. INSERCIÓN DE DATOS INICIALES
 -- ------------------------------------------------------------------
 
+-- Admin por defecto
 INSERT INTO usuarios (nombre, email, telefono, tipo, password_hash)
-SELECT 'Administrador Global', 'ramongonzalez101@gmail.com', '999999', 'administrador', crypt('admin1234', gen_salt('bf'))
-WHERE NOT EXISTS (SELECT 1 FROM usuarios WHERE email = 'ramongonzalez101@gmail.com');
+VALUES ('Administrador Global', 'ramongonzalez101@gmail.com', '999999', 'administrador', crypt('admin1234', gen_salt('bf')))
+ON CONFLICT (email) DO NOTHING;
 
--- Índices adicionales para optimización
+-- Porcentaje de comisión
+INSERT INTO configuracion_app (clave, valor) VALUES ('porcentaje_comision_delivery', 20.00);
+
+-- Vehículo y Servicio base
+INSERT INTO tipos_vehiculos (descript, amount_pay) VALUES ('MOTO', 0.00);
+INSERT INTO tipos_servicios (descript, amount_pay) VALUES ('DELIVERY', 0.00);
+
+-- Índices
 CREATE INDEX idx_pedidos_cliente ON pedidos(cliente_id);
-CREATE INDEX idx_payments_ref ON payments(referencia_bancaria);
 CREATE INDEX idx_repartidores_disponibilidad ON repartidores(is_available);
 CREATE INDEX idx_repartidores_fifo_queue ON repartidores (available_since) WHERE is_available = TRUE;
-
--- ------------------------------------------------------------------
-
--- Insertar vehículo MOTO por defecto
-INSERT INTO tipos_vehiculos (descript, amount_pay)
-SELECT 'MOTO', 0.00
-WHERE NOT EXISTS (SELECT 1 FROM tipos_vehiculos WHERE descript = 'MOTO');
-
--- Insertar servicio DELIVERY por defecto
-INSERT INTO tipos_servicios (descript, amount_pay)
-SELECT 'DELIVERY', 0.00
-WHERE NOT EXISTS (SELECT 1 FROM tipos_servicios WHERE descript = 'DELIVERY');
-
 -- -- ------------------------------------------------------------------
 -- -- SCRIPT COMPLETO CONSOLIDADO: GAZELLA EXPRESS (VENEZUELA UTC-4)
 -- -- ACTUALIZACIÓN: SISTEMA DE COLA ESTÁTICA (FIFO) PARA REPARTIDORES

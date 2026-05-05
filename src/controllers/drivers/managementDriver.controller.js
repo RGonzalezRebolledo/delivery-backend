@@ -77,62 +77,96 @@ export const getCurrentOrder = async (req, res) => {
 
 // 3. Lógica centralizada de estados (CON SOCKET PARA CLIENTE)
 export const updateOrderStatus = async (req, res) => {
-    const { pedido_id, status } = req.body;
-    const driverId = req.userId;
-    const io = req.app.get('socketio');
-    const client = await pool.connect();
+  const { pedido_id, status } = req.body;
+  const driverId = req.userId;
+  const io = req.app.get('socketio');
+  const client = await pool.connect();
 
-    try {
-        await client.query("BEGIN");
-        
-        // 1. Actualizar estado del pedido
-        const orderRes = await client.query(
-            `UPDATE pedidos SET estado = $1 WHERE id = $2 AND repartidor_id = $3 RETURNING id, cliente_id`,
-            [status, pedido_id, driverId]
-        );
+  try {
+      await client.query("BEGIN");
+      
+      // 1. Actualizar estado del pedido y obtener datos necesarios para la liquidación
+      const orderRes = await client.query(
+          `UPDATE pedidos 
+           SET estado = $1 
+           WHERE id = $2 AND repartidor_id = $3 
+           RETURNING id, cliente_id, total`,
+          [status, pedido_id, driverId]
+      );
 
-        if (orderRes.rows.length === 0) throw new Error("Pedido no encontrado o no asignado");
-        
-        const cliente_id = orderRes.rows[0].cliente_id;
+      if (orderRes.rows.length === 0) throw new Error("Pedido no encontrado o no asignado");
+      
+      const { cliente_id, total: montoTotal } = orderRes.rows[0];
 
-        // 2. Lógica de repartidores
-        if (status === 'en_camino') {
-            await client.query(
-                `UPDATE repartidores SET tiene_pedido = true, is_available = false WHERE usuario_id = $1`, 
-                [driverId]
-            );
-        } else if (status === 'entregado') {
-            await client.query(
-                `UPDATE repartidores SET tiene_pedido = false, is_available = true, available_since = NOW() WHERE usuario_id = $1`, 
-                [driverId]
-            );
-            await client.query(`UPDATE pedidos SET fecha_entrega = NOW() WHERE id = $1`, [pedido_id]);
-        }
+      // 2. Lógica de repartidores y Liquidación Financiera
+      if (status === 'en_camino') {
+          await client.query(
+              `UPDATE repartidores SET tiene_pedido = true, is_available = false WHERE usuario_id = $1`, 
+              [driverId]
+          );
+      } 
+      else if (status === 'entregado') {
+          // --- INICIO LÓGICA DE LIQUIDACIÓN ---
+          
+          // A. Obtener el porcentaje de comisión configurado por el admin
+          const configRes = await client.query(
+              "SELECT valor FROM configuracion_app WHERE clave = 'porcentaje_comision_delivery' LIMIT 1"
+          );
+          const porcentaje = configRes.rows[0]?.valor || 0;
 
-        await client.query("COMMIT");
+          // B. Cálculos (Comisión App vs Ganancia Repartidor)
+          const montoComisionApp = (montoTotal * (porcentaje / 100)).toFixed(2);
+          const montoRepartidor = (montoTotal - montoComisionApp).toFixed(2);
 
-        // 3. NOTIFICACIONES SOCKETS
-        if (io) {
-            // NOTIFICAR AL CLIENTE (Esto es lo que faltaba)
-            io.to(cliente_id.toString()).emit('ORDEN_ACTUALIZADA', {
-                pedido_id,
-                nuevo_estado: status
-            });
+          // C. Registrar en la tabla de liquidaciones
+          await client.query(
+              `INSERT INTO liquidaciones_repartidores 
+              (pedido_id, repartidor_id, monto_total_pedido, porcentaje_app, monto_comision_app, monto_repartidor)
+              VALUES ($1, $2, $3, $4, $5, $6)`,
+              [pedido_id, driverId, montoTotal, porcentaje, montoComisionApp, montoRepartidor]
+          );
 
-            // Si entregó, procesar la cola para otros pedidos
-            if (status === 'entregado') {
-                assignPendingOrders(io);
-            }
-        }
+          // --- FIN LÓGICA DE LIQUIDACIÓN ---
 
-        res.json({ success: true, message: `Estado actualizado a ${status}` });
-    } catch (error) {
-        if (client) await client.query("ROLLBACK");
-        console.error("Error en updateOrderStatus:", error);
-        res.status(500).json({ success: false, error: error.message });
-    } finally {
-        client.release();
-    }
+          // Actualizar estatus del repartidor y fecha de entrega
+          await client.query(
+              `UPDATE repartidores 
+               SET tiene_pedido = false, is_available = true, available_since = NOW() 
+               WHERE usuario_id = $1`, 
+              [driverId]
+          );
+          await client.query(`UPDATE pedidos SET fecha_entrega = NOW() WHERE id = $1`, [pedido_id]);
+      }
+
+      await client.query("COMMIT");
+
+      // 3. NOTIFICACIONES SOCKETS
+      if (io) {
+          // Notificar al cliente el cambio de estado
+          io.to(cliente_id.toString()).emit('ORDEN_ACTUALIZADA', {
+              pedido_id,
+              nuevo_estado: status
+          });
+
+          // Si entregó, procesar la cola para asignar nuevos pedidos pendientes
+          if (status === 'entregado') {
+              assignPendingOrders(io);
+          }
+      }
+
+      res.json({ 
+          success: true, 
+          message: `Estado actualizado a ${status}`,
+          data: status === 'entregado' ? { info: "Liquidación generada exitosamente" } : null 
+      });
+
+  } catch (error) {
+      if (client) await client.query("ROLLBACK");
+      console.error("❌ Error en updateOrderStatus:", error);
+      res.status(500).json({ success: false, error: error.message });
+  } finally {
+      client.release();
+  }
 };
 
 // 4. Función específica para finalizar
