@@ -42,48 +42,49 @@ export const getPendingRating = async (req, res) => {
  * Guarda la calificación en la base de datos.
  * Basado en tu script: emisor_id (cliente) y receptor_id (repartidor).
  */
+import { pool } from "../../db.js";
+
 export const submitRating = async (req, res) => {
-    const { pedidoId, estrellas, comentario } = req.body;
-    const emisorId = req.userId; 
-    const client = await pool.connect();
+    // Recibimos los datos del RatingModal
+    const { pedido_id, estrellas, comentario, isDriverRatingClient } = req.body;
+    const userId = req.userId; // El ID del usuario autenticado (emisor)
 
     try {
-        await client.query("BEGIN");
-
-        // Obtenemos el ID del repartidor asignado a ese pedido
-        const pedidoRes = await client.query(
-            "SELECT repartidor_id FROM pedidos WHERE id = $1 AND cliente_id = $2",
-            [pedidoId, emisorId]
+        // 1. Buscamos el pedido en la tabla 'pedidos' para validar existencia
+        const pedidoRes = await pool.query(
+            "SELECT id, cliente_id, repartidor_id FROM pedidos WHERE id = $1",
+            [pedido_id]
         );
 
         if (pedidoRes.rowCount === 0) {
-            throw new Error("Pedido no encontrado.");
+            return res.status(404).json({ error: "Pedido no encontrado." });
         }
 
-        const receptorId = pedidoRes.rows[0].repartidor_id;
+        const pedido = pedidoRes.rows[0];
 
-        // Insertamos usando tus columnas: emisor_id, receptor_id, estrellas, comentario
-        const insertQuery = `
-            INSERT INTO calificaciones_pedidos (pedido_id, emisor_id, receptor_id, estrellas, comentario)
-            VALUES ($1, $2, $3, $4, $5);
-        `;
-        await client.query(insertQuery, [pedidoId, emisorId, receptorId, estrellas, comentario]);
+        // 2. Lógica Dinámica de Receptor
+        // Si el que califica es el repartidor, el receptor es el cliente_id.
+        // Si el que califica es el cliente, el receptor es el repartidor_id.
+        let receptor_id;
+        if (isDriverRatingClient) {
+            receptor_id = pedido.cliente_id;
+        } else {
+            receptor_id = pedido.repartidor_id;
+        }
 
-        // Opcional: Cambiamos el estado a 'finalizado' para que ya no cuente como entregado/pendiente
-        await client.query(
-            "UPDATE pedidos SET estado = 'finalizado' WHERE id = $1",
-            [pedidoId]
+        // 3. Insertar en 'calificaciones_pedidos'
+        await pool.query(
+            `INSERT INTO calificaciones_pedidos 
+            (pedido_id, emisor_id, receptor_id, estrellas, comentario) 
+            VALUES ($1, $2, $3, $4, $5)`,
+            [pedido_id, userId, receptor_id, estrellas, comentario]
         );
 
-        await client.query("COMMIT");
-        res.json({ success: true, message: "¡Gracias por tu calificación!" });
+        res.json({ success: true, message: "Calificación guardada" });
 
     } catch (error) {
-        if (client) await client.query("ROLLBACK");
         console.error("❌ Error en submitRating:", error);
-        res.status(500).json({ success: false, error: error.message });
-    } finally {
-        client.release();
+        res.status(500).json({ error: "Error al procesar calificación" });
     }
 };
 // import { pool } from "../../db.js";
