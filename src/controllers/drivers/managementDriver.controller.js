@@ -187,36 +187,132 @@ export const getDriverRatingAverage = async (req, res) => {
 };
 
 // calificar al cliente
+// export const rateClient = async (req, res) => {
+//   const { pedido_id, estrellas, comentario } = req.body;
+//   const emisor_id = req.userId; // ID del Conductor (Auth middleware)
+
+//   try {
+//       // 1. Buscamos quién es el cliente de ese pedido
+//       const pedido = await pool.query(
+//           'SELECT cliente_id FROM pedidos WHERE id = $1',
+//           [pedido_id]
+//       );
+
+//       if (pedido.rows.length === 0) {
+//           return res.status(404).json({ error: "Pedido no encontrado" });
+//       }
+
+//       const receptor_id = pedido.rows[0].cliente_id;
+
+//       // 2. Insertamos la calificación
+//       await pool.query(
+//           `INSERT INTO calificaciones_pedidos (pedido_id, emisor_id, receptor_id, estrellas, comentario, rol_emisor)
+//            VALUES ($1, $2, $3, $4, $5, 'repartidor')`,
+//           [pedido_id, emisor_id, receptor_id, estrellas, comentario]
+//       );
+
+//       res.json({ success: true, message: "Cliente calificado con éxito" });
+//   } catch (error) {
+//       console.error("Error al calificar cliente:", error);
+//       res.status(500).json({ error: "Error interno del servidor" });
+//   }
+// };
+
+
+// En managementDriver.controller.js - REEMPLAZAR la función rateClient
 export const rateClient = async (req, res) => {
   const { pedido_id, estrellas, comentario } = req.body;
-  const emisor_id = req.userId; // ID del Conductor (Auth middleware)
+  const emisor_id = req.userId; // ID del CONDUCTOR (quien califica)
 
   try {
-      // 1. Buscamos quién es el cliente de ese pedido
-      const pedido = await pool.query(
-          'SELECT cliente_id FROM pedidos WHERE id = $1',
-          [pedido_id]
-      );
+    // 1. Verificar que el pedido existe y el conductor fue el asignado
+    const pedido = await pool.query(
+      `SELECT cliente_id, repartidor_id FROM pedidos WHERE id = $1`,
+      [pedido_id]
+    );
 
-      if (pedido.rows.length === 0) {
-          return res.status(404).json({ error: "Pedido no encontrado" });
-      }
+    if (pedido.rows.length === 0) {
+      return res.status(404).json({ error: "Pedido no encontrado" });
+    }
 
-      const receptor_id = pedido.rows[0].cliente_id;
+    const { cliente_id, repartidor_id } = pedido.rows[0];
 
-      // 2. Insertamos la calificación
-      await pool.query(
-          `INSERT INTO calificaciones_pedidos (pedido_id, emisor_id, receptor_id, estrellas, comentario, rol_emisor)
-           VALUES ($1, $2, $3, $4, $5, 'repartidor')`,
-          [pedido_id, emisor_id, receptor_id, estrellas, comentario]
-      );
+    // 2. Verificar que este conductor fue el asignado a este pedido
+    if (repartidor_id !== emisor_id) {
+      return res.status(403).json({ error: "No tienes permiso para calificar este pedido" });
+    }
 
-      res.json({ success: true, message: "Cliente calificado con éxito" });
+    const receptor_id = cliente_id; // El cliente es quien recibe la calificación
+
+    // 3. Verificar si ya calificó este pedido (UNIQUE constraint)
+    const existingRating = await pool.query(
+      `SELECT id FROM calificaciones_pedidos WHERE pedido_id = $1 AND emisor_id = $2`,
+      [pedido_id, emisor_id]
+    );
+
+    if (existingRating.rows.length > 0) {
+      return res.status(400).json({ error: "Ya calificaste este pedido" });
+    }
+
+    // 4. Insertar la calificación del CONDUCTOR → CLIENTE
+    await pool.query(
+      `INSERT INTO calificaciones_pedidos (pedido_id, emisor_id, receptor_id, estrellas, comentario)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [pedido_id, emisor_id, receptor_id, estrellas, comentario || null]
+    );
+
+    res.json({ 
+      success: true, 
+      message: "¡Cliente calificado exitosamente! ⭐" 
+    });
+
   } catch (error) {
-      console.error("Error al calificar cliente:", error);
-      res.status(500).json({ error: "Error interno del servidor" });
+    console.error("❌ Error al calificar cliente:", error);
+    res.status(500).json({ error: "Error interno del servidor" });
   }
 };
+
+// NUEVA FUNCIÓN: Obtener datos del cliente para mostrar en el modal del conductor
+export const getClientInfoForRating = async (req, res) => {
+  const { pedido_id } = req.params;
+  const driverId = req.userId;
+
+  try {
+    const query = `
+      SELECT 
+        u.nombre as cliente_nombre,
+        u.telefono as cliente_telefono,
+        p.estado
+      FROM pedidos p
+      JOIN usuarios u ON p.cliente_id = u.id
+      WHERE p.id = $1 AND p.repartidor_id = $2
+    `;
+    
+    const result = await pool.query(query, [pedido_id, driverId]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Pedido no encontrado" });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error("Error:", error);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 // import { pool } from "../../db.js";
 // import { assignPendingOrders } from "../../services/assignmentServices.js";
