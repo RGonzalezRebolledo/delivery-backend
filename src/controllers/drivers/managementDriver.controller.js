@@ -76,81 +76,113 @@ export const getCurrentOrder = async (req, res) => {
 };
 
 // 3. Lógica centralizada de estados (CON SOCKET PARA CLIENTE)
+// export const updateOrderStatus = async (req, res) => {
+//   const { pedido_id, status } = req.body;
+//   const driverId = req.userId;
+//   const io = req.app.get('socketio');
+//   const client = await pool.connect();
+
+//   try {
+//       await client.query("BEGIN");
+      
+//       const orderRes = await client.query(
+//           `UPDATE pedidos 
+//            SET estado = $1 
+//            WHERE id = $2 AND repartidor_id = $3 
+//            RETURNING id, cliente_id, total, total_dolar`,
+//           [status, pedido_id, driverId]
+//       );
+
+//       if (orderRes.rows.length === 0) throw new Error("Pedido no encontrado");
+      
+//       const { cliente_id, total: montoBs, total_dolar: montoUsd } = orderRes.rows[0];
+
+//       if (status === 'entregado') {
+//           // 1. Obtener porcentaje de la App
+//           const configRes = await client.query(
+//               "SELECT valor FROM configuracion_app WHERE clave = 'porcentaje_comision_delivery' LIMIT 1"
+//           );
+//           const porcentaje = configRes.rows[0]?.valor || 0;
+
+//           // 2. Cálculo en Bolívares
+//           const comisionBs = (montoBs * (porcentaje / 100)).toFixed(2);
+//           const netoRepartidorBs = (montoBs - comisionBs).toFixed(2);
+
+//           // 3. Cálculo en Dólares (Basado en lo que pagó el cliente)
+//           const comisionUsd = (montoUsd * (porcentaje / 100)).toFixed(2);
+//           const netoRepartidorUsd = (montoUsd - comisionUsd).toFixed(2);
+          
+//           // Tasa implícita del momento del pedido
+//           const tasaReferencia = montoUsd > 0 ? (montoBs / montoUsd).toFixed(4) : 0;
+
+//           // 4. Registrar Liquidación con los nuevos campos
+//           await client.query(
+//               `INSERT INTO liquidaciones_repartidores 
+//               (pedido_id, repartidor_id, monto_total_pedido, porcentaje_app, 
+//                monto_comision_app, monto_repartidor, tasa_dolar_referencia, 
+//                monto_comision_usd, monto_repartidor_usd)
+//               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+//               [
+//                   pedido_id, driverId, montoBs, porcentaje, 
+//                   comisionBs, netoRepartidorBs, tasaReferencia, 
+//                   comisionUsd, netoRepartidorUsd
+//               ]
+//           );
+
+//           await client.query(
+//               `UPDATE repartidores SET tiene_pedido = false, is_available = true, available_since = NOW() 
+//                WHERE usuario_id = $1`, [driverId]
+//           );
+//           await client.query(`UPDATE pedidos SET fecha_entrega = NOW() WHERE id = $1`, [pedido_id]);
+//       }
+
+//       await client.query("COMMIT");
+
+//       if (io) {
+//           io.to(cliente_id.toString()).emit('ORDEN_ACTUALIZADA', { pedido_id, nuevo_estado: status });
+//           if (status === 'entregado') assignPendingOrders(io);
+//       }
+
+//       res.json({ success: true, message: `Estado actualizado a ${status}` });
+
+//   } catch (error) {
+//       if (client) await client.query("ROLLBACK");
+//       console.error("❌ Error:", error);
+//       res.status(500).json({ success: false, error: error.message });
+//   } finally {
+//       client.release();
+//   }
+// };
 export const updateOrderStatus = async (req, res) => {
   const { pedido_id, status } = req.body;
-  const driverId = req.userId;
-  const io = req.app.get('socketio');
-  const client = await pool.connect();
 
   try {
-      await client.query("BEGIN");
-      
-      const orderRes = await client.query(
-          `UPDATE pedidos 
-           SET estado = $1 
-           WHERE id = $2 AND repartidor_id = $3 
-           RETURNING id, cliente_id, total, total_dolar`,
-          [status, pedido_id, driverId]
+      if (status === 'entregado') {
+          // VALIDACIÓN CRÍTICA: ¿El repartidor ya calificó este pedido?
+          const calificacion = await pool.query(
+              `SELECT id FROM calificaciones_pedidos 
+               WHERE pedido_id = $1 AND rol_emisor = 'repartidor'`,
+              [pedido_id]
+          );
+
+          if (calificacion.rows.length === 0) {
+              return res.status(403).json({ 
+                  success: false, 
+                  mustRate: true, 
+                  message: "Debes calificar al cliente antes de finalizar la entrega." 
+              });
+          }
+      }
+
+      // Si pasa la validación (o no es estado 'entregado'), actualizamos
+      await pool.query(
+          'UPDATE pedidos SET estado = $1 WHERE id = $2',
+          [status, pedido_id]
       );
 
-      if (orderRes.rows.length === 0) throw new Error("Pedido no encontrado");
-      
-      const { cliente_id, total: montoBs, total_dolar: montoUsd } = orderRes.rows[0];
-
-      if (status === 'entregado') {
-          // 1. Obtener porcentaje de la App
-          const configRes = await client.query(
-              "SELECT valor FROM configuracion_app WHERE clave = 'porcentaje_comision_delivery' LIMIT 1"
-          );
-          const porcentaje = configRes.rows[0]?.valor || 0;
-
-          // 2. Cálculo en Bolívares
-          const comisionBs = (montoBs * (porcentaje / 100)).toFixed(2);
-          const netoRepartidorBs = (montoBs - comisionBs).toFixed(2);
-
-          // 3. Cálculo en Dólares (Basado en lo que pagó el cliente)
-          const comisionUsd = (montoUsd * (porcentaje / 100)).toFixed(2);
-          const netoRepartidorUsd = (montoUsd - comisionUsd).toFixed(2);
-          
-          // Tasa implícita del momento del pedido
-          const tasaReferencia = montoUsd > 0 ? (montoBs / montoUsd).toFixed(4) : 0;
-
-          // 4. Registrar Liquidación con los nuevos campos
-          await client.query(
-              `INSERT INTO liquidaciones_repartidores 
-              (pedido_id, repartidor_id, monto_total_pedido, porcentaje_app, 
-               monto_comision_app, monto_repartidor, tasa_dolar_referencia, 
-               monto_comision_usd, monto_repartidor_usd)
-              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-              [
-                  pedido_id, driverId, montoBs, porcentaje, 
-                  comisionBs, netoRepartidorBs, tasaReferencia, 
-                  comisionUsd, netoRepartidorUsd
-              ]
-          );
-
-          await client.query(
-              `UPDATE repartidores SET tiene_pedido = false, is_available = true, available_since = NOW() 
-               WHERE usuario_id = $1`, [driverId]
-          );
-          await client.query(`UPDATE pedidos SET fecha_entrega = NOW() WHERE id = $1`, [pedido_id]);
-      }
-
-      await client.query("COMMIT");
-
-      if (io) {
-          io.to(cliente_id.toString()).emit('ORDEN_ACTUALIZADA', { pedido_id, nuevo_estado: status });
-          if (status === 'entregado') assignPendingOrders(io);
-      }
-
-      res.json({ success: true, message: `Estado actualizado a ${status}` });
-
+      res.json({ success: true });
   } catch (error) {
-      if (client) await client.query("ROLLBACK");
-      console.error("❌ Error:", error);
-      res.status(500).json({ success: false, error: error.message });
-  } finally {
-      client.release();
+      res.status(500).json({ error: "Error al actualizar estado" });
   }
 };
 
@@ -183,6 +215,38 @@ export const getDriverRatingAverage = async (req, res) => {
   } catch (error) {
       console.error("❌ Error al obtener promedio:", error);
       res.status(500).json({ error: "Error al obtener reputación del conductor" });
+  }
+};
+
+// calificar al cliente
+export const rateClient = async (req, res) => {
+  const { pedido_id, estrellas, comentario } = req.body;
+  const emisor_id = req.userId; // ID del Conductor (Auth middleware)
+
+  try {
+      // 1. Buscamos quién es el cliente de ese pedido
+      const pedido = await pool.query(
+          'SELECT cliente_id FROM pedidos WHERE id = $1',
+          [pedido_id]
+      );
+
+      if (pedido.rows.length === 0) {
+          return res.status(404).json({ error: "Pedido no encontrado" });
+      }
+
+      const receptor_id = pedido.rows[0].cliente_id;
+
+      // 2. Insertamos la calificación
+      await pool.query(
+          `INSERT INTO calificaciones_pedidos (pedido_id, emisor_id, receptor_id, estrellas, comentario, rol_emisor)
+           VALUES ($1, $2, $3, $4, $5, 'repartidor')`,
+          [pedido_id, emisor_id, receptor_id, estrellas, comentario]
+      );
+
+      res.json({ success: true, message: "Cliente calificado con éxito" });
+  } catch (error) {
+      console.error("Error al calificar cliente:", error);
+      res.status(500).json({ error: "Error interno del servidor" });
   }
 };
 

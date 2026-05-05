@@ -4,7 +4,8 @@ import {
   getCurrentOrder,
   completeOrder,
   updateOrderStatus,
-  getDriverRatingAverage
+  getDriverRatingAverage,
+  rateClient
 } from "../../controllers/drivers/managementDriver.controller.js";
 import { verifyToken } from "../middlewares/verifyToken.js"; // 👈 Importar el middleware
 
@@ -23,5 +24,6 @@ routerDriverManagement.get("/driver/current-order", getCurrentOrder);
 routerDriverManagement.post("/driver/complete-order", completeOrder);
 routerDriverManagement.patch("/driver/order-status", updateOrderStatus);
 routerDriverManagement.get('/driver/rating/:driverId', getDriverRatingAverage);
+routerDriverManagement.post('/rate-client',rateClient);
 
 export default routerDriverManagement;
