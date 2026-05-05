@@ -42,7 +42,6 @@ export const getPendingRating = async (req, res) => {
  * Guarda la calificación en la base de datos.
  * Basado en tu script: emisor_id (cliente) y receptor_id (repartidor).
  */
-import { pool } from "../../db.js";
 
 export const submitRating = async (req, res) => {
     // Recibimos los datos del RatingModal
