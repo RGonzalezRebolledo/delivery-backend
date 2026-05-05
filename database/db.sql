@@ -148,14 +148,14 @@ CREATE TABLE payments (
 -- 6. CALIFICACIONES Y LIQUIDACIONES
 -- ------------------------------------------------------------------
 
-CREATE TABLE calificaciones (
+CREATE TABLE calificaciones_pedidos (
     id SERIAL PRIMARY KEY,
-    pedido_id INT REFERENCES pedidos(id) ON DELETE CASCADE,
-    emisor_id INT REFERENCES usuarios(id),
-    receptor_id INT REFERENCES usuarios(id),
-    puntuacion INT NOT NULL CHECK (puntuacion BETWEEN 1 AND 5),
+    pedido_id INT NOT NULL REFERENCES pedidos(id) ON DELETE CASCADE,
+    emisor_id INT NOT NULL REFERENCES usuarios(id), -- El Cliente
+    receptor_id INT NOT NULL REFERENCES usuarios(id), -- El Repartidor
+    estrellas INT NOT NULL CHECK (estrellas BETWEEN 1 AND 5), -- Cambiado a 'estrellas'
     comentario TEXT,
-    fecha_calificacion TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    fecha TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(pedido_id, emisor_id)
 );
 

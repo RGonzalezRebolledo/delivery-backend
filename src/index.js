@@ -31,6 +31,7 @@ import routerAdminManagment from './routes/administrator/managment/managment.rou
 import routerActiveVehicleTypes from './routes/client/clienteActiveVehicleTypes.js';
 import routerAvailableDrivers from './routes/administrator/managment/driver/availableDrivers.route.js';
 import routerAdminDashboardStats from './routes/administrator/dashboardAdmin.route.js';
+import routerPendintCalification from './routes/client/calification.route.js';
 
 const app = express();
 const httpServer = createServer(app);
@@ -160,6 +161,7 @@ app.use (routerAdminManagment)
 app.use (routerActiveVehicleTypes)
 app.use (routerAvailableDrivers)
 app.use (routerAdminDashboardStats)
+app.use (routerPendintCalification)
 // --- MANEJO DE ERRORES GLOBAL ---
 app.use((err, req, res, next) => {
     console.error('🔥 Error detectado:', err.stack);
