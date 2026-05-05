@@ -30,6 +30,7 @@ import routerGetDriverByOrder from './routes/client/newOrderDriver.route.js';
 import routerAdminManagment from './routes/administrator/managment/managment.route.js'
 import routerActiveVehicleTypes from './routes/client/clienteActiveVehicleTypes.js';
 import routerAvailableDrivers from './routes/administrator/managment/driver/availableDrivers.route.js';
+import routerAdminDashboardStats from './routes/administrator/dashboardAdmin.route.js';
 
 const app = express();
 const httpServer = createServer(app);
@@ -158,6 +159,7 @@ app.use(routerGetDriverByOrder);
 app.use (routerAdminManagment)
 app.use (routerActiveVehicleTypes)
 app.use (routerAvailableDrivers)
+app.use (routerAdminDashboardStats)
 // --- MANEJO DE ERRORES GLOBAL ---
 app.use((err, req, res, next) => {
     console.error('🔥 Error detectado:', err.stack);
