@@ -167,6 +167,11 @@ CREATE TABLE liquidaciones_repartidores (
     porcentaje_app DECIMAL(5, 2) NOT NULL,
     monto_comision_app DECIMAL(12, 2) NOT NULL,
     monto_repartidor DECIMAL(12, 2) NOT NULL,
+    -- Nuevos campos para respaldo en Divisas
+    tasa_dolar_referencia DECIMAL(12, 4) NOT NULL, 
+    monto_comision_usd DECIMAL(12, 2) NOT NULL,
+    monto_repartidor_usd DECIMAL(12, 2) NOT NULL,
+    
     estado_pago_repartidor VARCHAR(20) DEFAULT 'pendiente' CHECK (estado_pago_repartidor IN ('pendiente', 'pagado')),
     fecha_proceso TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
