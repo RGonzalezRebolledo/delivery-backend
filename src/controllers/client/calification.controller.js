@@ -1,34 +1,8 @@
 import { pool } from "../../db.js";
 
-export const getPendingRating = async (req, res) => {
-    const usuarioId = req.userId; 
-
-    try {
-        const query = `
-            SELECT id, total as monto_bs, total_dolar as monto_usd, fecha_pedido
-            FROM pedidos 
-            WHERE cliente_id = $1 
-              AND estado = 'entregado' 
-              AND calificado = false
-            ORDER BY fecha_pedido ASC
-            LIMIT 1;
-        `;
-        const result = await pool.query(query, [usuarioId]);
-
-        if (result.rows.length > 0) {
-            res.json({ tienePendientes: true, pedido: result.rows[0] });
-        } else {
-            res.json({ tienePendientes: false });
-        }
-    } catch (error) {
-        console.error("❌ Error en getPendingRating:", error);
-        res.status(500).json({ error: "Error interno al verificar calificaciones" });
-    }
-};
-
 export const submitRating = async (req, res) => {
     const { pedidoId, estrellas, comentario } = req.body;
-    const emisorId = req.userId; 
+    const emisorId = req.userId; // El ID del usuario logueado (Cliente)
     const client = await pool.connect();
 
     if (!estrellas || estrellas < 1 || estrellas > 5) {
@@ -38,6 +12,7 @@ export const submitRating = async (req, res) => {
     try {
         await client.query("BEGIN");
 
+        // 1. Verificamos que el pedido exista y obtenemos al repartidor (receptor)
         const pedidoRes = await client.query(
             "SELECT repartidor_id FROM pedidos WHERE id = $1 AND cliente_id = $2",
             [pedidoId, emisorId]
@@ -49,15 +24,24 @@ export const submitRating = async (req, res) => {
 
         const receptorId = pedidoRes.rows[0].repartidor_id;
 
-        // --- CAMBIO AQUÍ: usuario_id -> cliente_id ---
+        // 2. INSERT en 'calificaciones_pedidos' usando los nombres reales de tu script
+        // emisor_id = Cliente, receptor_id = Repartidor
         const insertQuery = `
-            INSERT INTO calificaciones_pedidos (pedido_id, cliente_id, conductor_id, estrellas, comentario)
+            INSERT INTO calificaciones_pedidos (
+                pedido_id, 
+                emisor_id, 
+                receptor_id, 
+                estrellas, 
+                comentario
+            )
             VALUES ($1, $2, $3, $4, $5);
         `;
         await client.query(insertQuery, [pedidoId, emisorId, receptorId, estrellas, comentario]);
 
+        // 3. Marcamos el pedido como calificado en la tabla 'pedidos'
+        // (Asegúrate de tener esta columna 'calificado' en tu tabla pedidos o ignora este paso)
         await client.query(
-            "UPDATE pedidos SET calificado = true WHERE id = $1",
+            "UPDATE pedidos SET estado = 'finalizado' WHERE id = $1", 
             [pedidoId]
         );
 
@@ -69,7 +53,7 @@ export const submitRating = async (req, res) => {
         console.error("❌ Error en submitRating:", error);
         res.status(500).json({ 
             success: false, 
-            error: "Error al procesar la calificación. Verifica los nombres de las columnas." 
+            error: error.message || "Error al procesar la calificación" 
         });
     } finally {
         client.release();
