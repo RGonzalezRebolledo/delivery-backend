@@ -25,7 +25,8 @@ export const getAdminDashboardStats = async (req, res) => {
             SELECT 
                 COUNT(*) as total_pedidos,
                 COUNT(*) FILTER (WHERE estado = 'entregado') as completados,
-                COUNT(*) FILTER (WHERE estado = 'pendiente') as en_espera
+                COUNT(*) FILTER (WHERE estado = 'pendiente') as en_espera,
+                COUNT(*) FILTER (WHERE estado = 'finalizado') as terminado
             FROM pedidos
             WHERE DATE_TRUNC('month', fecha_pedido) = DATE_TRUNC('month', CURRENT_DATE);
         `;
